@@ -19,7 +19,9 @@ struct CopilotSetupStep: View {
                 OllamaSetupRows()
             case .balanced?:
                 KeyCheckField(service: .claude, label: "Claude API key", placeholder: "sk-ant-…",
-                              hint: "Get a key at console.anthropic.com. Saved in your macOS keychain.",
+                              hint: APIKeyStore.isSessionOnly
+                                  ? "Test build: your key stays in memory until Parrot quits. No keychain access. Get a key at console.anthropic.com."
+                                  : "Get a key at console.anthropic.com. Saved in your macOS keychain.",
                               result: $model.claudeCheck)
                 Text("Claude also writes your after-call reports.")
                     .font(Theme.Typography.secondary)

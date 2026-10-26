@@ -1,0 +1,46 @@
+name: Local macOS compatibility candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  candidate:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: .build
+          key: local-compat-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
+      # Same prerequisite as upstream CI: a fresh runner lacks the optional
+      # NaturalLanguage embedding assets used by the offline logic harness.
+      - name: Prepare offline embedding assets
+        timeout-minutes: 6
+        continue-on-error: true
+        run: |
+          cat > /tmp/parrot-embedding-assets.swift <<'SWIFT'
+          import Foundation
+          import NaturalLanguage
+          let done = DispatchSemaphore(value: 0)
+          for lang in [NLLanguage.english, .turkish] {
+              guard let model = NLContextualEmbedding(language: lang) else { continue }
+              if model.hasAvailableAssets { continue }
+              model.requestAssets { result, error in
+                  print("\(lang.rawValue): \(result.rawValue) \(error?.localizedDescription ?? "")")
+                  done.signal()
+              }
+              _ = done.wait(timeout: .now() + 120)
+          }
+          SWIFT
+          swift /tmp/parrot-embedding-assets.swift
+      - name: Build and verify candidate
+        run: bash scripts/build-local-candidate.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: local-macos-candidate
+          path: |
+            Parrot-local-candidate.zip
+            build-evidence/
+          retention-days: 7

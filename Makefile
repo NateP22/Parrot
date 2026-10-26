@@ -7,6 +7,7 @@
 # Run `make` (or `make help`) for the target list.
 
 CONFIG      ?= release
+SWIFT_BUILD_FLAGS ?=
 DIST        ?= dist
 APP         := $(DIST)/Parrot.app
 PLIST       := $(APP)/Contents/Info.plist
@@ -95,7 +96,7 @@ howto:
 
 .PHONY: build
 build:
-	swift build -c $(CONFIG)
+	swift build -c $(CONFIG) $(SWIFT_BUILD_FLAGS)
 
 # Mirrors scripts/release.sh's assembly. Info.plist is xcodegen-managed and
 # still holds $$(VAR) placeholders that Xcode would substitute — do it here.

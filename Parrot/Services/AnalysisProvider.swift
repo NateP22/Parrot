@@ -730,9 +730,13 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
 /// Stores API keys in the user's keychain. One service, one account per
 /// provider — "claude-api-key" (default), "groq-api-key", "deepgram-api-key".
 enum APIKeyStore {
-    private static let service = "com.uygar.parrot"
+    static let isSessionOnly = Bundle.main.object(forInfoDictionaryKey: "ParrotSessionOnlyCredentials") as? Bool ?? false
+    // A development bundle can isolate every credential operation from the
+    // installed app's ACL. Never fall back to, or migrate from, that service.
+    private static let service = Bundle.main.object(forInfoDictionaryKey: "ParrotKeychainService") as? String
+        ?? "com.uygar.parrot"
 
-    /// Keys by account, nil value = known missing. A live call asked
+    /// Keys by account, nil value = unavailable for this session. A live call asked
     /// `isConfigured` on every transcript segment: ~280 main-thread Keychain
     /// round trips in 10 minutes (2026-10-07). save/delete below write through,
     /// so it can't go stale inside the app.
@@ -743,15 +747,25 @@ enum APIKeyStore {
     /// or the user believes the key is saved and every call fails "missing key".
     @discardableResult
     static func save(_ key: String, account: String = "claude-api-key") -> Bool {
-        delete(account: account)
         guard !key.isEmpty, let data = key.data(using: .utf8) else { return false }
+        if isSessionOnly {
+            cache.withLock { _ = $0.updateValue(key, forKey: account) }
+            return true
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-            kSecValueData as String: data,
         ]
-        guard SecItemAdd(query as CFDictionary, nil) == errSecSuccess else { return false }
+        let attributes = [kSecValueData as String: data]
+        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        if status == errSecItemNotFound {
+            var newItem = query
+            newItem[kSecValueData as String] = data
+            guard SecItemAdd(newItem as CFDictionary, nil) == errSecSuccess else { return false }
+        } else if status != errSecSuccess {
+            return false
+        }
         cache.withLock { _ = $0.updateValue(key, forKey: account) }
         return true
     }
@@ -771,6 +785,9 @@ enum APIKeyStore {
         let args = ProcessInfo.processInfo.arguments
         if args.contains("--profile-test") || args.contains("--help-shots") { return nil }
         if let hit = cache.withLock({ $0[account] }) { return hit }
+        // Diagnostic bundles opt into memory-only credentials: even looking
+        // for a missing key in a locked legacy keychain can display a prompt.
+        if isSessionOnly { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -780,22 +797,28 @@ enum APIKeyStore {
         ]
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
-        // Remember only a definite answer: a locked keychain or a declined
-        // prompt must be asked again, not cached as "no key".
-        guard status == errSecSuccess || status == errSecItemNotFound else { return nil }
-        let key = (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
+        // A declined/locked read must not make every UI refresh ask again.
+        // A successful explicit Save refreshes this entry; relaunch retries it.
+        let key = status == errSecSuccess
+            ? (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
+            : nil
         // A save/delete that landed during the read is newer: keep it.
         cache.withLock { if $0.index(forKey: account) == nil { $0.updateValue(key, forKey: account) } }
         return key
     }
 
     static func delete(account: String = "claude-api-key") {
+        if isSessionOnly {
+            cache.withLock { _ = $0.updateValue(nil, forKey: account) }
+            return
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ]
-        SecItemDelete(query as CFDictionary)
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else { return }
         cache.withLock { _ = $0.updateValue(nil, forKey: account) }
     }
 }

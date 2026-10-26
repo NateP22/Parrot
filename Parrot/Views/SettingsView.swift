@@ -768,7 +768,9 @@ struct SettingsView: View {
                 }
             }
 
-            Hint("All keys are stored in your macOS keychain, never in the app's files.")
+            Hint(APIKeyStore.isSessionOnly
+                 ? "Test build: keys stay in memory until Parrot quits. This build does not access your keychain."
+                 : "All keys are stored in your macOS keychain, never in the app's files.")
         }
     }
 }
@@ -892,7 +894,7 @@ struct ProviderKeyField: View {
                 .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 if saved {
-                    Label("Saved", systemImage: "checkmark.circle")
+                    Label(APIKeyStore.isSessionOnly ? "Ready for this session" : "Saved", systemImage: "checkmark.circle")
                         .foregroundStyle(Theme.Colors.good)
                         .font(Theme.Typography.secondary)
                 } else if failed {
