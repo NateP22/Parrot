@@ -531,6 +531,13 @@ final class AudioCaptureManager: NSObject {
     // MARK: - Microphone (AVAudioEngine)
 
     private func startMicCapture() throws {
+        // AVAudioEngine can advertise a plausible output format even when
+        // this Mac has no input hardware. Do not create an input engine then:
+        // installTap can raise an Objective-C exception Swift cannot catch.
+        guard Self.defaultDeviceID(input: true) != nil else {
+            Self.oslog.log("microphone unavailable — no default input device")
+            throw CaptureError.noMicrophone
+        }
         let engine = AVAudioEngine()
         let inputNode = engine.inputNode
 
@@ -540,12 +547,16 @@ final class AudioCaptureManager: NSObject {
         // Reverted. Echo (mic picking up the speakers) is avoided by using
         // headphones; a safer AEC approach can be revisited and tested later.
 
+        let hardwareFormat = inputNode.inputFormat(forBus: 0)
         let inputFormat = inputNode.outputFormat(forBus: 0)
 
-        // When mic access is denied/unavailable the input format collapses to 0
-        // channels; installing a tap on that would crash. Bail out cleanly so the
-        // caller can continue with system audio only.
-        guard inputFormat.channelCount > 0, inputFormat.sampleRate > 0 else {
+        // Apple requires checking the INPUT (hardware) format. The output
+        // alone can remain 44.1 kHz stereo with no usable microphone. This
+        // real-device path has no voice processing/manual format conversion.
+        guard MicrophoneInputFormat.isUsable(
+            hardwareRate: hardwareFormat.sampleRate, hardwareChannels: hardwareFormat.channelCount,
+            tapRate: inputFormat.sampleRate, tapChannels: inputFormat.channelCount) else {
+            Self.oslog.log("microphone unavailable — input hardware/tap formats are invalid or mismatched")
             throw CaptureError.noMicrophone
         }
 
@@ -559,13 +570,14 @@ final class AudioCaptureManager: NSObject {
             interleaved: false
         )!
 
-        let converter = AVAudioConverter(from: inputFormat, to: targetFormat)
+        guard let converter = AVAudioConverter(from: inputFormat, to: targetFormat) else {
+            throw CaptureError.noMicrophone
+        }
 
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
             guard let self, self.isCapturing else { return }
 
             // Convert to target format
-            guard let converter else { return }
             let frameCount = AVAudioFrameCount(
                 Double(buffer.frameLength) * self.sampleRate / inputFormat.sampleRate
             )
