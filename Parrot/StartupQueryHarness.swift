@@ -151,4 +151,3 @@ private struct QueryStartupProbe: View {
                            details: observation.details)
     }
 }
-
