@@ -38,3 +38,12 @@ git rev-parse HEAD > build-evidence/source-commit.txt
 shasum -a 256 dist/Parrot.app/Contents/MacOS/Parrot > build-evidence/binary.sha256
 ditto -c -k --keepParent dist/Parrot.app Parrot-local-candidate.zip
 shasum -a 256 Parrot-local-candidate.zip > build-evidence/archive.sha256
+python3 - <<'PY'
+from pathlib import Path
+import subprocess
+with Path('build-evidence/query-startup.log').open('w') as output:
+    result = subprocess.run(['dist/Parrot.app/Contents/MacOS/Parrot', '--query-startup-test'],
+                            stdout=output, stderr=subprocess.STDOUT, timeout=30)
+    result.check_returncode()
+PY
+tail -1 build-evidence/query-startup.log

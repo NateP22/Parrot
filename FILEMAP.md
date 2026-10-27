@@ -7,6 +7,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 
 | File | L | Purpose |
 |---|---|---|
+| `Parrot/StartupQueryHarness.swift` | 125 | `--query-startup-test`: no-audio, in-memory SwiftData query insert/save/view-transition diagnostic; never opens the user store or credentials |
 | `Parrot/ParrotApp.swift` | 290 | `@main`; parses CLI harness flags before the SwiftUI `App` starts |
 | `Parrot/ProfileTest.swift` | 5750 | `--profile-test`: headless logic harness, ~1850 checks |
 | `Parrot/ProfileTest+Parakeet.swift` | 190 | `--profile-test` checks for Parakeet: language router, per-side probe, recommendation, rewind, imports |

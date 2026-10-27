@@ -7,6 +7,10 @@ struct ParrotMain {
     /// design verification (see SnapshotTool.swift); otherwise the normal app runs.
     static func main() {
         let args = CommandLine.arguments
+        if args.contains("--query-startup-test") {
+            MainActor.assumeIsolated { StartupQueryHarness.run() }
+            return
+        }
         // Launched by an AI app (Claude Desktop…) as its MCP server: stdio,
         // read-only, refuses unless enabled in Settings → Connections.
         if args.contains("--mcp") {
