@@ -687,12 +687,10 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        // .sortedKeys is load-bearing: the API compiles the structured-output
-        // schema into a grammar and caches it for 24h KEYED ON THE SCHEMA BYTES.
-        // Swift dictionary order is randomized per process, so without sorting
-        // every app launch sent byte-different schema JSON and repaid the
-        // one-time grammar compilation on its first analysis pass — measured at
-        // 1–4 minutes for the current schema vs seconds on a cache hit.
+        // Keep request serialization deterministic. Anthropic caches compiled
+        // grammars for 24h from use; structural schema changes invalidate that
+        // cache, while name/description-only changes do not. A new schema can
+        // still add first-use latency, which needs a separate cold-start test.
         request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
 
         // ponytail: single retry with fixed backoff on transient failures; add

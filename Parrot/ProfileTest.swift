@@ -5092,18 +5092,26 @@ enum ProfileTest {
             references: [KBReference(documentName: "doc", note: nil, text: "support@parrot.app")],
             instructions: "be brief", callBrief: "", allowGeneralKnowledge: true, knownDocumentNames: [],
             persona: "", counterpart: "x", kinds: [], gauges: [])
+        request.currentQuestion = "Which export option should a@b.co use?"
         request.calendarContext = "Guests: x@y.io"
         let red = req.redact(request)
         check("redact: request transcript hidden", !red.transcript.contains("a@b.co"))
+        check("redact: latest question survives with personal details hidden",
+              red.currentQuestion == "Which export option should [EMAIL_1] use?")
         check("redact: known titles hidden consistently", red.knownInsightTitles == ["Send deck to [EMAIL_1]"])
         check("redact: references and invite hidden", !red.references[0].text.contains("@") && !red.calendarContext.contains("@"))
         check("redact: user's own instructions untouched", red.instructions == "be brief")
         let result = AnalysisResult(
-            insights: [InsightDraft(kindKey: "k", title: "Send deck to [EMAIL_1]", detail: "d", source: nil)],
+            insights: [InsightDraft(kindKey: "k", title: "Send deck to [EMAIL_1]", detail: "d", source: nil,
+                                   evidenceQuote: "Send the export to [EMAIL_1].",
+                                   answerKey: "Which export option should [EMAIL_1] use?")],
             sentiment: [:], read: nil, coach: "Ask [EMAIL_1]", resolved: ["Send deck to [EMAIL_1]"])
         let back = req.restore(result)
         check("redact: result restored", back.insights[0].title == "Send deck to a@b.co" && back.coach == "Ask a@b.co"
               && back.resolved == ["Send deck to a@b.co"])
+        check("redact: supporting evidence and question identity survive restoration",
+              back.insights[0].evidenceQuote == "Send the export to a@b.co." &&
+              back.insights[0].answerKey == request.currentQuestion)
     }
 
     static func testRetention() {

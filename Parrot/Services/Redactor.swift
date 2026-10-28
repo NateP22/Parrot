@@ -135,6 +135,7 @@ extension Redactor {
     mutating func redact(_ r: AnalysisRequest) -> AnalysisRequest {
         var copy = AnalysisRequest(
             transcript: redact(r.transcript),
+            currentQuestion: r.currentQuestion.map { redact($0) },
             knownInsightTitles: r.knownInsightTitles.map { redact($0) },
             references: r.references.map { KBReference(documentName: $0.documentName, note: $0.note,
                                                        text: redact($0.text)) },
@@ -158,7 +159,9 @@ extension Redactor {
             insights: r.insights.map { d in
                 InsightDraft(kindKey: d.kindKey, title: restore(d.title), detail: restore(d.detail),
                              source: d.source, reply: d.reply.map { restore($0) },
-                             supersedes: d.supersedes.map { restore($0) })
+                             supersedes: d.supersedes.map { restore($0) },
+                             evidenceQuote: d.evidenceQuote.map { restore($0) },
+                             answerKey: d.answerKey.map { restore($0) })
             },
             sentiment: r.sentiment,
             read: r.read.map { restore($0) },
