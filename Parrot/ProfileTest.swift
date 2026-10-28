@@ -35,6 +35,7 @@ enum ProfileTest {
         testWAVEncoder()
         testAIUsageCost()
         testPermissionFlow()
+        testMicrophoneInputFormat()
         testMicWatchdog()
         testCaptureClock()
         testEchoGate()
@@ -2731,6 +2732,14 @@ enum ProfileTest {
               PermissionFlow.nextSystemAudioStep(proven: false, screenGranted: false, askedBefore: true, settingsShownBefore: false) == .openSettings)
         check("sysaudio: after prompt + Settings it stops gatekeeping",
               PermissionFlow.nextSystemAudioStep(proven: false, screenGranted: false, askedBefore: true, settingsShownBefore: true) == .granted)
+    }
+
+    static func testMicrophoneInputFormat() {
+        check("mic: no input streams are unavailable",
+              !MicrophoneInputFormat.hasInputChannels([])
+                && !MicrophoneInputFormat.hasInputChannels([0, 0]))
+        check("mic: any active input stream is available",
+              MicrophoneInputFormat.hasInputChannels([0, 1, 0]))
     }
 
     static func testJevMatcher() {

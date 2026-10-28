@@ -113,9 +113,14 @@ final class SystemAudioTap {
             let aggregateMs = ms(t1)
             let t2 = ProcessInfo.processInfo.systemUptime
 
-            err = AudioDeviceCreateIOProcIDWithBlock(&ioProcID, aggregateID, queue) { [weak self] _, inInputData, inInputTime, _, _ in
-                self?.deliver(inInputData, at: inInputTime.pointee)
-            }
+            // Register the C IOProc directly. On macOS 26.5.1 the block
+            // overload can hang in HALC_ProxyIOContext while reporting stream
+            // usage for this private tap aggregate; the recording task then
+            // never reaches `isCapturing = true`. The callback still funnels
+            // through our serial queue so format changes and conversion remain
+            // ordered as they were with the block overload.
+            let clientData = Unmanaged.passUnretained(self).toOpaque()
+            err = AudioDeviceCreateIOProcID(aggregateID, Self.ioProc, clientData, &ioProcID)
             guard err == noErr, ioProcID != nil else {
                 throw TapError.coreAudio(stage: "IO proc", status: err)
             }
@@ -232,6 +237,26 @@ final class SystemAudioTap {
         }
         guard error == nil, converted.frameLength > 0, let onBuffer else { return }
         deliveryQueue.async { onBuffer(converted) }
+    }
+
+    /// Core Audio invokes the IOProc on its device callback thread. Run the
+    /// conversion on our serial queue and finish before returning so the
+    /// borrowed AudioBufferList remains valid and format changes stay ordered.
+    private static func ioProc(
+        _ device: AudioObjectID,
+        _ now: UnsafePointer<AudioTimeStamp>,
+        _ inputData: UnsafePointer<AudioBufferList>,
+        _ inputTime: UnsafePointer<AudioTimeStamp>,
+        _ outputData: UnsafeMutablePointer<AudioBufferList>,
+        _ outputTime: UnsafePointer<AudioTimeStamp>,
+        _ clientData: UnsafeMutableRawPointer?
+    ) -> OSStatus {
+        guard let clientData else { return noErr }
+        let tap = Unmanaged<SystemAudioTap>.fromOpaque(clientData).takeUnretainedValue()
+        tap.queue.sync {
+            tap.deliver(inputData, at: inputTime.pointee)
+        }
+        return noErr
     }
 
     // MARK: - Format handling

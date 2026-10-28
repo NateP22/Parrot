@@ -534,8 +534,9 @@ final class AudioCaptureManager: NSObject {
         // AVAudioEngine can advertise a plausible output format even when
         // this Mac has no input hardware. Do not create an input engine then:
         // installTap can raise an Objective-C exception Swift cannot catch.
-        guard Self.defaultDeviceID(input: true) != nil else {
-            Self.oslog.log("microphone unavailable — no default input device")
+        guard let inputDeviceID = Self.defaultDeviceID(input: true),
+              MicrophoneInputFormat.hasInputChannels(Self.inputChannelCounts(deviceID: inputDeviceID)) else {
+            Self.oslog.log("microphone unavailable — default input has no input streams")
             throw CaptureError.noMicrophone
         }
         let engine = AVAudioEngine()
@@ -868,6 +869,30 @@ final class AudioCaptureManager: NSObject {
         guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &deviceID) == noErr,
               deviceID != 0 else { return nil }
         return deviceID
+    }
+
+    /// A nonzero default-device ID and AVAudioEngine's advertised format can
+    /// exist even when macOS has no actual input device. Check Core Audio's
+    /// stream configuration before installing an AVAudioEngine tap; that call
+    /// can raise an uncaught Objective-C exception for a phantom input.
+    private static func inputChannelCounts(deviceID: AudioDeviceID) -> [UInt32] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreamConfiguration,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize) == noErr,
+              dataSize >= UInt32(MemoryLayout<AudioBufferList>.size) else { return [] }
+
+        let storage = UnsafeMutableRawPointer.allocate(
+            byteCount: Int(dataSize), alignment: MemoryLayout<AudioBufferList>.alignment)
+        defer { storage.deallocate() }
+        let list = storage.bindMemory(to: AudioBufferList.self, capacity: 1)
+        guard AudioObjectGetPropertyData(deviceID, &address, 0, nil, &dataSize, list) == noErr else {
+            return []
+        }
+        return UnsafeMutableAudioBufferListPointer(list).map(\.mNumberChannels)
     }
 
     /// The default input's volume slider, 0...1. #98: call apps with
