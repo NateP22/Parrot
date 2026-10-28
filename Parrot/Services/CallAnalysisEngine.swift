@@ -133,6 +133,8 @@ final class CallAnalysisEngine {
     /// This call is on-device only (see CloudGate): Ollama, no TypeSafe.
     private(set) var forceLocal = false
     private var segments: [(time: TimeInterval, text: String, source: AudioSource)] = []
+    private var seenDocumentAnswers: Set<String> = []
+    private var documentAnswerInsightIDs: Set<UUID> = []
     /// Seconds each side has spoken: the live talk balance. Seconds, not
     /// characters, so a Turkish call isn't under-counted.
     private var meSeconds: TimeInterval = 0
@@ -174,6 +176,8 @@ final class CallAnalysisEngine {
         }
         insights = []
         segments = []
+        seenDocumentAnswers = []
+        documentAnswerInsightIDs = []
         lastAnalyzedCount = 0
         rerunRequested = false
         pendingUrgent = false
@@ -387,7 +391,9 @@ final class CallAnalysisEngine {
         Self.log.notice("pass: \(window.count) lines, \(window.filter { $0.source == .them && names[$0.time] != nil }.count) with a speaker name")
         // Excerpts are not model insights: listing one as "already shown"
         // would make Haiku skip the very question it answers.
-        let knownTitles = insights.filter { $0.kindKey != Insight.docExcerptKind }.prefix(20).map(\.title)
+        let knownTitles = insights.filter {
+            $0.kindKey != Insight.docExcerptKind && !documentAnswerInsightIDs.contains($0.id)
+        }.prefix(20).map(\.title)
         let anchorTime = window.last?.time ?? 0
 
         // Retrieve knowledge base material matching the most recent speech.
@@ -479,15 +485,16 @@ final class CallAnalysisEngine {
                 // observed citing an unrelated card (dropping a genuinely new
                 // insight is worse than letting one duplicate through).
                 .filter { draft in
+                    if draft.answerKey != nil { return true }
                     guard let claimed = draft.supersedes, !claimed.isEmpty else { return true }
                     return !Self.verdictCorroborated(
                         supersedes: claimed,
                         draftText: "\(draft.title) \(draft.detail)",
                         openCards: openInsights.map { ($0.title, "\($0.title) \($0.detail)") })
                 }
-                .filter { !existingTitles.contains($0.title.lowercased()) }
+                .filter { $0.answerKey != nil || !existingTitles.contains($0.title.lowercased()) }
                 .filter { draft in
-                    !openInsights.contains { existing in
+                    draft.answerKey != nil || !openInsights.contains { existing in
                         existing.kindKey == draft.kindKey && Self.isNearDuplicate(
                             "\(draft.title) \(draft.detail)",
                             "\(existing.title) \(existing.detail)")
@@ -499,7 +506,8 @@ final class CallAnalysisEngine {
             // request; a draft goes when any pair reads as the same issue.
             // Fail-open: no key, no cards, or an error keeps every draft.
             var admitted = candidates
-            if !candidates.isEmpty, !openInsights.isEmpty, fastPathAvailable, let matcher = docMatcher {
+            if candidates.contains(where: { $0.answerKey == nil }),
+               !openInsights.isEmpty, fastPathAvailable, let matcher = docMatcher {
                 let open = Array(openInsights.prefix(20))
                 let pairs = candidates.flatMap { draft in
                     open.map { (a: "\(draft.title). \(draft.detail)", b: "\($0.title). \($0.detail)") }
@@ -514,10 +522,17 @@ final class CallAnalysisEngine {
                     for (index, draft) in candidates.enumerated() where !keep[index] {
                         Self.log.notice("dedup dropped [\(draft.kindKey, privacy: .public)] \(draft.title.prefix(80), privacy: .public)")
                     }
-                    admitted = zip(candidates, keep).filter { $0.1 }.map { $0.0 }
+                    admitted = zip(candidates, keep).filter { $0.0.answerKey != nil || $0.1 }.map { $0.0 }
                 }
             }
-            let unique = admitted.map { Insight(kindKey: $0.kindKey, title: $0.title, detail: $0.detail, callTime: anchorTime, source: $0.source, reply: $0.reply) }
+            let unique = admitted.compactMap { draft -> Insight? in
+                if let identity = Self.documentAnswerIdentity(draft),
+                   !seenDocumentAnswers.insert(identity).inserted { return nil }
+                let insight = Insight(kindKey: draft.kindKey, title: draft.title, detail: draft.detail,
+                                      callTime: anchorTime, source: draft.source, reply: draft.reply)
+                if draft.answerKey != nil { documentAnswerInsightIDs.insert(insight.id) }
+                return insight
+            }
             insights.insert(contentsOf: unique, at: 0)
             for inserted in unique {
                 Self.log.notice("card [\(inserted.kindKey, privacy: .public)] \(inserted.title.prefix(80), privacy: .public)")
@@ -836,6 +851,17 @@ final class CallAnalysisEngine {
         // must never count as topic evidence.
         "prospect", "prospects", "asked", "asking", "asks", "whether", "said", "user",
     ]
+
+    /// Display titles are deliberately neutral and can repeat. Question +
+    /// answer content supplies identity; a later revision is retained as a
+    /// new card rather than silently replacing the first answer.
+    nonisolated static func documentAnswerIdentity(_ draft: InsightDraft) -> String? {
+        guard let question = draft.answerKey else { return nil }
+        let normalized = question.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        return [normalized, draft.reply ?? "", draft.detail, draft.source ?? ""].joined(separator: "\u{0}")
+    }
 
     nonisolated static func significantTokens(_ s: String) -> Set<String> {
         Set(s.lowercased()

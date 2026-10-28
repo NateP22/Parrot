@@ -26,6 +26,8 @@ enum ProfileTest {
         testPromptAndSchema()
         testClaudeModelConfiguration()
         testGroundedAnswerGuard()
+        testEvidenceReviewTransport()
+        testDocumentAnswerDelivery()
         testSnapshotPersistence()
         testLenientKBDecode()
         testStableHash()
@@ -2587,19 +2589,31 @@ enum ProfileTest {
             title: "The customer needs caption help",
             detail: "The style controls set this for every photo.",
             source: source,
-            reply: "Choose the credit style below.",
+            reply: "Choose Beside image and enable Credit Below Caption.",
             evidenceQuote: quote
         )
         let accepted = A.validatingGroundedAnswers(
             [generated], references: [reference], knownDocuments: [source],
             question: question, allowGeneralKnowledge: false
         )
-        check("strict answer shows the exact short source line",
-              accepted.first?.detail == quote && accepted.first?.reply == quote)
-        check("strict answer drops generated title and wording",
+        check("candidate separates the short reply from complete source evidence",
+              accepted.first?.detail == quote && accepted.first?.reply == generated.reply)
+        check("candidate drops unreviewed title and explanatory prose",
               accepted.first?.title == "From your docs" && accepted.first?.detail != generated.detail)
         check("strict answer retains its matching source",
               accepted.first?.source == source)
+        check("candidate identity comes from the actual question",
+              accepted.first?.answerKey == question)
+        var otherQuestion = accepted[0]
+        otherQuestion.answerKey = "Which export settings preserve hyperlinks?"
+        check("same title and reply for another question stay distinct",
+              CallAnalysisEngine.documentAnswerIdentity(otherQuestion) !=
+              CallAnalysisEngine.documentAnswerIdentity(accepted[0]))
+        var sameQuestion = accepted[0]
+        sameQuestion.answerKey = question.uppercased().replacingOccurrences(of: "?", with: "!")
+        check("question identity ignores casing and punctuation",
+              CallAnalysisEngine.documentAnswerIdentity(sameQuestion) ==
+              CallAnalysisEngine.documentAnswerIdentity(accepted[0]))
 
         let laterPassage = A.validatingGroundedAnswers(
             [generated],
@@ -2609,7 +2623,7 @@ enum ProfileTest {
             knownDocuments: [source], question: question, allowGeneralKnowledge: false
         )
         check("strict answer checks later passages of the same document",
-              laterPassage.first?.reply == quote && laterPassage.first?.source == source)
+              laterPassage.first?.reply == generated.reply && laterPassage.first?.source == source)
 
         let partialQuote = "export settings remove the page number."
         let clipped = InsightDraft(kindKey: "answer", title: "Export answer",
@@ -2682,10 +2696,10 @@ enum ProfileTest {
                 quote: "Move the quote anywhere around the page."
               ))
 
-        let longQuote = String(repeating: "caption ", count: 21) + "photo."
+        let longQuote = String(repeating: "caption ", count: 201) + "photo."
         let tooLong = InsightDraft(
             kindKey: "answer", title: "Long answer",
-            detail: longQuote, source: source, reply: longQuote,
+            detail: longQuote, source: source, reply: generated.reply,
             evidenceQuote: longQuote
         )
         let overLimit = A.validatingGroundedAnswers(
@@ -2693,8 +2707,69 @@ enum ProfileTest {
                                                 text: longQuote)],
             knownDocuments: [source], question: question, allowGeneralKnowledge: false
         )
-        check("overlong source sentence is withheld rather than truncated",
+        check("overlong evidence is withheld rather than truncated",
               overLimit.first?.detail == A.checkFirstMessage)
+
+        let longReply = InsightDraft(kindKey: "answer", title: "Long reply",
+            detail: quote, source: source,
+            reply: String(repeating: "caption ", count: 31), evidenceQuote: quote)
+        let rejectedLongReply = A.validatingGroundedAnswers(
+            [longReply], references: [reference], knownDocuments: [source],
+            question: question, allowGeneralKnowledge: false
+        )
+        check("overlong spoken reply is withheld rather than clipped",
+              rejectedLongReply.first?.detail == A.checkFirstMessage)
+        check("two short spoken sentences are allowed",
+              A.isConciseSpokenReply("Choose the export format. Keep hyperlinks enabled."))
+        check("three spoken sentences are withheld",
+              !A.isConciseSpokenReply("Choose the export format. Keep hyperlinks enabled. Save the file."))
+        let excerpt = "Choose the export format. Keep hyperlinks enabled only for supported files."
+        check("complete adjacent evidence sentences remain intact",
+              A.containsCompleteSourceExcerpt(excerpt, in: "Read the guide first. " + excerpt))
+        check("unfinished source fragments are withheld",
+              !A.containsCompleteSourceExcerpt("Choose the export format",
+                                               in: "Choose the export format"))
+
+        func reviewData(_ fields: [String: Any], stop: String = "end_turn") -> Data {
+            let json = try! JSONSerialization.data(withJSONObject: fields)
+            return try! JSONSerialization.data(withJSONObject: [
+                "content": [["type": "thinking"],
+                            ["type": "text", "text": String(decoding: json, as: UTF8.self)]],
+                "stop_reason": stop,
+            ])
+        }
+        let yes: [String: Any] = ["supported": true, "answers_question": true,
+                                 "preserves_conditions": true]
+        check("review requires all explicit positive judgments", A.evidenceReviewPassed(reviewData(yes)))
+        for key in ["supported", "answers_question", "preserves_conditions"] {
+            var no = yes
+            no[key] = false
+            check("review rejects a failed judgment: \(key)", !A.evidenceReviewPassed(reviewData(no)))
+            no.removeValue(forKey: key)
+            check("review rejects a missing judgment: \(key)", !A.evidenceReviewPassed(reviewData(no)))
+        }
+        check("truncated review is not approval",
+              !A.evidenceReviewPassed(reviewData(yes, stop: "max_tokens")))
+        check("refused review is not approval",
+              !A.evidenceReviewPassed(reviewData(yes, stop: "refusal")))
+        check("malformed review is not approval", !A.evidenceReviewPassed(Data("error".utf8)))
+        let unapproved = A.applyingEvidenceReview(accepted[0], approved: false)
+        check("unapproved candidate cannot display generated answer or source",
+              unapproved.detail == A.checkFirstMessage && unapproved.reply == nil && unapproved.source == nil)
+        check("abstention retains its question identity", unapproved.answerKey == question)
+        check("approved candidate preserves its short answer and evidence",
+              A.applyingEvidenceReview(accepted[0], approved: true).reply == generated.reply)
+        let reviewBody = try? A.evidenceReviewBody(generated, question: question,
+            references: [reference, KBReference(documentName: "Another document.md",
+                                               note: nil, text: "Unrelated text.")])
+        let reviewMessages = reviewBody?["messages"] as? [[String: String]]
+        let reviewText = reviewMessages?.first?["content"] ?? ""
+        let reviewContent = (try? JSONSerialization.jsonObject(with: Data(reviewText.utf8))) as? [String: Any]
+        check("review receives the question and actual proposed reply",
+              reviewContent?["question"] as? String == question &&
+              reviewContent?["answer"] as? String == generated.reply)
+        check("review receives only passages from the cited document",
+              reviewContent?["passages"] as? [String] == [quote])
 
         let noAnswer = A.addCheckFirstFallbackIfNeeded(
             [], question: question, allowGeneralKnowledge: false,
@@ -2711,6 +2786,194 @@ enum ProfileTest {
         )
         check("general-knowledge profiles retain their existing answer path",
               general.first?.detail == wrongQuote.detail)
+    }
+
+    private final class EvidenceTransport: URLProtocol, @unchecked Sendable {
+        enum Reply { case response(Data, Int); case failure(URLError) }
+        private static let lock = NSLock()
+        private static var pending: [Reply] = []
+        private static var bodies: [Data] = []
+        static func configure(_ replies: [Reply]) {
+            lock.lock(); defer { lock.unlock() }
+            pending = replies; bodies = []
+        }
+        static var requests: [Data] {
+            lock.lock(); defer { lock.unlock() }; return bodies
+        }
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            var body = request.httpBody ?? Data()
+            if body.isEmpty, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while true {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    body.append(buffer, count: count)
+                }
+            }
+            Self.lock.lock()
+            Self.bodies.append(body)
+            let next = Self.pending.isEmpty ? Reply.failure(URLError(.badServerResponse)) : Self.pending.removeFirst()
+            Self.lock.unlock()
+            switch next {
+            case .failure(let error): client?.urlProtocol(self, didFailWithError: error)
+            case .response(let data, let status):
+                let response = HTTPURLResponse(url: request.url!, statusCode: status,
+                                               httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+                client?.urlProtocol(self, didLoad: data)
+                client?.urlProtocolDidFinishLoading(self)
+            }
+        }
+        override func stopLoading() {}
+    }
+
+    /// The actual Claude provider and URLSession path, with synthetic packets
+    /// only. No real key, account, model, network or user store is touched.
+    @MainActor
+    static func testEvidenceReviewTransport() {
+        func packet(_ text: String, stop: String = "end_turn") -> Data {
+            try! JSONSerialization.data(withJSONObject: [
+                "content": [["type": "text", "text": text]], "stop_reason": stop,
+            ])
+        }
+        let source = "Fixture guide.md"
+        let evidence = "Enable the export option only for supported files."
+        let payload: [String: Any] = [
+            "insights": [["kind": "suggestion", "title": "Invented cause",
+                          "detail": "The issue is fixed.", "source": source,
+                          "reply": evidence, "evidence_quote": evidence, "supersedes": ""]],
+            "sentiment": [:], "read": "Everything is resolved.", "coach": "Tell them it is fixed.",
+            "resolved": ["Earlier issue"],
+        ]
+        let main = packet(String(decoding: try! JSONSerialization.data(withJSONObject: payload), as: UTF8.self))
+        let yes = #"{"supported":true,"answers_question":true,"preserves_conditions":true}"#
+        let no = #"{"supported":true,"answers_question":false,"preserves_conditions":true}"#
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [EvidenceTransport.self]
+        let session = URLSession(configuration: config)
+        defer { session.invalidateAndCancel() }
+        let provider = ClaudeAnalysisProvider(session: session, keyProvider: { "synthetic-test-credential" })
+        let request = AnalysisRequest(
+            transcript: "Them: Which export option can I enable for supported files?",
+            currentQuestion: "Which export option can I enable for supported files?",
+            knownInsightTitles: [], references: [
+                KBReference(documentName: source, note: nil, text: evidence),
+                KBReference(documentName: "Other guide.md", note: nil, text: "Unrelated passage."),
+            ], instructions: "", callBrief: "", allowGeneralKnowledge: false,
+            knownDocumentNames: [source], persona: "", counterpart: "the client",
+            kinds: [ProfileKind(id: UUID(), key: "suggestion", label: "Suggestion",
+                                colorHex: "000000", iconSystemName: "text.bubble",
+                                triggerDescription: "", isPinned: false, priority: 0)], gauges: [])
+        func run(_ reply: EvidenceTransport.Reply) -> AnalysisResult? {
+            EvidenceTransport.configure([.response(main, 200), reply])
+            var result: AnalysisResult?
+            var finished = false
+            let task = Task {
+                result = try? await provider.analyze(request)
+                finished = true
+            }
+            let deadline = Date.now + 4
+            while !finished && Date.now < deadline { RunLoop.main.run(until: .now + 0.01) }
+            if !finished { task.cancel() }
+            check("transport: synthetic provider request completed", finished && result != nil)
+            return result
+        }
+        let accepted = run(.response(packet(yes), 200))
+        check("transport: real provider makes generation and review requests", EvidenceTransport.requests.count == 2)
+        check("transport: approved short answer and intact evidence survive",
+              accepted?.insights.first?.reply == evidence && accepted?.insights.first?.detail == evidence)
+        check("transport: strict answer cannot infer coaching or resolution",
+              accepted?.read == nil && accepted?.coach == nil && accepted?.resolved.isEmpty == true)
+        let reviewRequest = EvidenceTransport.requests.last
+            .flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+        let messages = reviewRequest?["messages"] as? [[String: String]]
+        let reviewText = messages?.first?["content"] ?? ""
+        let review = (try? JSONSerialization.jsonObject(with: Data(reviewText.utf8))) as? [String: Any]
+        check("transport: actual review receives only the cited document passages",
+              review?["passages"] as? [String] == [evidence])
+        for failure in [
+            EvidenceTransport.Reply.response(packet(no), 200),
+            .response(packet(yes, stop: "refusal"), 200),
+            .response(packet(yes, stop: "max_tokens"), 200),
+            .response(Data("malformed".utf8), 200),
+            .response(Data(), 500),
+            .failure(URLError(.timedOut)),
+        ] {
+            let result = run(failure)
+            check("transport: failed review shows only Check first",
+                  result?.insights.count == 1 &&
+                  result?.insights.first?.detail == ClaudeAnalysisProvider.checkFirstMessage &&
+                  result?.insights.first?.reply == nil && result?.insights.first?.source == nil)
+            check("transport: failed reviewer does not retry and delay the call",
+                  EvidenceTransport.requests.count == 2)
+        }
+    }
+
+    private final class DocumentAnswerProvider: AnalysisProvider, @unchecked Sendable {
+        var calls = 0
+        var reply = "Enable the export option."
+        var knownTitles: [[String]] = []
+        var isConfigured: Bool { true }
+        func analyze(_ request: AnalysisRequest) async throws -> AnalysisResult {
+            calls += 1
+            knownTitles.append(request.knownInsightTitles)
+            return AnalysisResult(insights: [
+                InsightDraft(kindKey: "suggestion", title: "From your docs",
+                    detail: "Complete supporting sentence.", source: "Fixture guide.md",
+                    reply: reply, answerKey: request.currentQuestion)
+            ], sentiment: [:], read: nil, coach: nil, resolved: [])
+        }
+        func summarize(transcript: String, insightTitles: [String], bookmarks: [String],
+                       instructions: String, counterpart: String, template: ReportTemplate) async throws -> String { "" }
+        func coachingReport(transcript: String, talkPercentMe: Int, instructions: String,
+                            counterpart: String, template: ReportTemplate) async throws -> String { "" }
+        func complete(system: String, user: String, maxTokens: Int) async throws -> String { "" }
+    }
+
+    /// Exercises real engine admission: neutral display titles must not cause
+    /// the second question, or an explicit later revision, to disappear.
+    @MainActor
+    static func testDocumentAnswerDelivery() {
+        withDefaults(["copilotEnabled": true, "copilotPace": "fast"]) {
+            func wait(_ seconds: TimeInterval, until done: () -> Bool) {
+                let deadline = Date.now + seconds
+                while !done() && Date.now < deadline { RunLoop.main.run(until: .now + 0.02) }
+            }
+            let ai = DocumentAnswerProvider()
+            let engine = CallAnalysisEngine(provider: ai)
+            let profile = ProfilePresets.all().first { $0.name == "Sales discovery" }
+            let first = "Which export settings preserve hyperlinks?"
+            let second = "Which page settings preserve numbering?"
+            engine.start(profile: profile)
+            engine.ingest(text: first, at: 1, source: .them)
+            wait(4) { engine.insights.count == 1 }
+            check("document answer: first question arrives", engine.insights.count == 1)
+            engine.ingest(text: second, at: 4, source: .them)
+            wait(4) { engine.insights.count == 2 }
+            check("document answer: another question survives identical display title and reply",
+                  engine.insights.count == 2)
+            check("document answer: neutral titles do not become model dedup instructions",
+                  ai.knownTitles.last?.isEmpty == true)
+            engine.ingest(text: second, at: 7, source: .them)
+            wait(4) { ai.calls >= 3 && engine.status == .listening }
+            check("document answer: repeated identical answer is deduplicated",
+                  ai.calls >= 3 && engine.insights.count == 2)
+            ai.reply = "Keep numbering enabled for the export."
+            engine.ingest(text: second, at: 10, source: .them)
+            wait(4) { engine.insights.count == 3 }
+            check("document answer: later revision is retained alongside first answer",
+                  engine.insights.count == 3 &&
+                  engine.insights.contains { $0.reply == "Enable the export option." })
+            engine.stop()
+            engine.start(profile: profile)
+            engine.ingest(text: first, at: 1, source: .them)
+            wait(4) { engine.insights.count == 1 }
+            check("document answer: a new call resets question admission", engine.insights.count == 1)
+            engine.stop()
+        }
     }
 
     static func testClaudeModelConfiguration() {
