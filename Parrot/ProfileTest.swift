@@ -2866,10 +2866,13 @@ enum ProfileTest {
             "insights": [["kind": "suggestion", "title": "Invented cause",
                           "detail": "The issue is fixed.", "source": source,
                           "reply": evidence, "evidence_quote": evidence, "supersedes": ""]],
-            "sentiment": [:], "read": "Everything is resolved.", "coach": "Tell them it is fixed.",
+            "sentiment": ["read": "Everything is resolved.", "coach": "Tell them it is fixed."],
             "resolved": ["Earlier issue"],
         ]
         let main = packet(String(decoding: try! JSONSerialization.data(withJSONObject: payload), as: UTF8.self))
+        let untrusted = try? ClaudeAnalysisProvider.parseResult(from: main)
+        check("transport: fixture actually contains untrusted coaching and resolution",
+              untrusted?.read != nil && untrusted?.coach != nil && untrusted?.resolved == ["Earlier issue"])
         let yes = #"{"supported":true,"answers_question":true,"preserves_conditions":true}"#
         let no = #"{"supported":true,"answers_question":false,"preserves_conditions":true}"#
         let config = URLSessionConfiguration.ephemeral
