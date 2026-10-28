@@ -28,6 +28,7 @@ enum ProfileTest {
         testGroundedAnswerGuard()
         testEvidenceReviewTransport()
         testDocumentAnswerDelivery()
+        testUrgentQuestionPreemption()
         testSnapshotPersistence()
         testLenientKBDecode()
         testStableHash()
@@ -3151,6 +3152,113 @@ enum ProfileTest {
             wait(4) { engine.insights.count == 1 }
             check("document answer: a new call resets question admission", engine.insights.count == 1)
             engine.stop()
+        }
+    }
+
+    private final class PreemptionProvider: AnalysisProvider, @unchecked Sendable {
+        struct State {
+            var starts: [(question: String?, at: Date)] = []
+            var ambientCancellations = 0
+            var questionCancellations = 0
+            var ambientFinished = false
+        }
+        private let lock = NSLock()
+        private var state = State()
+        var snapshot: State { lock.withLock { state } }
+        var questionDelay: TimeInterval = 0
+        var ignoresAmbientCancellation = false
+        var isConfigured: Bool { true }
+        func analyze(_ request: AnalysisRequest) async throws -> AnalysisResult {
+            lock.withLock { state.starts.append((request.currentQuestion, .now)) }
+            if request.currentQuestion == nil {
+                do { try await Task.sleep(for: .seconds(2)) }
+                catch {
+                    lock.withLock { state.ambientCancellations += 1 }
+                    guard ignoresAmbientCancellation else { throw error }
+                    // A provider may return after cancellation; its completion
+                    // must not release the replacement question task's slot.
+                    await withCheckedContinuation { continuation in
+                        DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) { continuation.resume() }
+                    }
+                }
+                lock.withLock { state.ambientFinished = true }
+                return AnalysisResult(insights: [InsightDraft(kindKey: "suggestion", title: "Old ambient advice",
+                    detail: "Obsolete advice", source: nil)], sentiment: ["score": 50],
+                    read: "Old ambient read", coach: "Old ambient coaching", resolved: [])
+            }
+            do { try await Task.sleep(for: .seconds(questionDelay)) }
+            catch { lock.withLock { state.questionCancellations += 1 }; throw error }
+            return AnalysisResult(insights: [InsightDraft(kindKey: "suggestion", title: "Question fixture",
+                detail: "Question fixture reply", source: nil, reply: "Question fixture reply",
+                answerKey: request.currentQuestion)], sentiment: [:], read: nil, coach: nil, resolved: [])
+        }
+        func summarize(transcript: String, insightTitles: [String], bookmarks: [String],
+                       instructions: String, counterpart: String, template: ReportTemplate) async throws -> String { "" }
+        func coachingReport(transcript: String, talkPercentMe: Int, instructions: String,
+                            counterpart: String, template: ReportTemplate) async throws -> String { "" }
+        func complete(system: String, user: String, maxTokens: Int) async throws -> String { "" }
+    }
+
+    @MainActor
+    static func testUrgentQuestionPreemption() {
+        withDefaults(["copilotEnabled": true, "copilotPace": "fast"]) {
+            @MainActor
+            func wait(_ seconds: TimeInterval, until done: () -> Bool) {
+                let deadline = Date.now + seconds
+                while !done() && Date.now < deadline { RunLoop.main.run(until: .now + 0.02) }
+            }
+            @MainActor
+            func beginAmbient(_ engine: CallAnalysisEngine, _ provider: PreemptionProvider, strict: Bool) {
+                let profile = ProfilePresets.all().first { $0.name == "Sales discovery" }!
+                profile.allowGeneralKnowledge = !strict
+                engine.start(profile: profile)
+                engine.setPaused(true)
+                engine.ingest(text: "We are discussing export settings.", at: 1, source: .them)
+                engine.setPaused(false)
+                wait(1) { provider.snapshot.starts.count == 1 }
+            }
+            let question = "Which export settings preserve hyperlinks?"
+            let provider = PreemptionProvider()
+            let engine = CallAnalysisEngine(provider: provider)
+            beginAmbient(engine, provider, strict: true)
+            check("strict preemption: ambient fixture starts", provider.snapshot.starts.count == 1)
+            let askedAt = Date.now
+            engine.ingest(text: question, at: 2, source: .them)
+            wait(1.2) { engine.insights.contains { $0.reply == "Question fixture reply" } }
+            let questionAt = provider.snapshot.starts.first { $0.question != nil }?.at
+            check("strict preemption: question request does not wait for ambient completion and floor",
+                  questionAt.map { $0.timeIntervalSince(askedAt) < 1.2 } == true)
+            check("strict preemption: obsolete ambient request is cancelled once",
+                  provider.snapshot.ambientCancellations == 1)
+            check("strict preemption: only the question answer appears",
+                  engine.insights.count == 1 && engine.insights.first?.reply == "Question fixture reply" &&
+                  engine.coachLine == nil && engine.sentiment.isEmpty)
+            engine.stop()
+
+            let general = PreemptionProvider()
+            let generalEngine = CallAnalysisEngine(provider: general)
+            beginAmbient(generalEngine, general, strict: false)
+            generalEngine.ingest(text: question, at: 2, source: .them)
+            wait(0.6) { general.snapshot.starts.count > 1 }
+            check("strict preemption: general profiles preserve their existing cadence",
+                  general.snapshot.starts.count == 1 && general.snapshot.ambientCancellations == 0)
+            generalEngine.stop()
+
+            let late = PreemptionProvider()
+            late.ignoresAmbientCancellation = true
+            late.questionDelay = 3
+            let lateEngine = CallAnalysisEngine(provider: late)
+            beginAmbient(lateEngine, late, strict: true)
+            lateEngine.ingest(text: question, at: 2, source: .them)
+            wait(1.2) { late.snapshot.starts.contains { $0.question != nil } && late.snapshot.ambientFinished }
+            check("strict preemption: cancellation-ignoring ambient completion cannot insert stale advice",
+                  late.snapshot.ambientFinished && lateEngine.insights.isEmpty && lateEngine.coachLine == nil)
+            lateEngine.ingest(text: "Which page settings preserve numbering?", at: 3, source: .them)
+            wait(0.6) { late.snapshot.starts.filter { $0.question != nil }.count > 1 }
+            check("strict preemption: late completion cannot clear the active question slot",
+                  late.snapshot.starts.filter { $0.question != nil }.count == 1 &&
+                  late.snapshot.questionCancellations == 0)
+            lateEngine.stop()
         }
     }
 

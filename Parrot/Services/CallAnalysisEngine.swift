@@ -142,6 +142,9 @@ final class CallAnalysisEngine {
     private var lastAnalyzedCount = 0
     private var debounceTask: Task<Void, Never>?
     private var analysisTask: Task<Void, Never>?
+    /// nil when idle; otherwise records whether the scheduled/in-flight pass
+    /// answers a question. A strict question can replace ambient work only.
+    private var analysisHasQuestion: Bool?
     private var lastAnalysisEnd = Date.distantPast
     private var rerunRequested = false
     /// A "Them" question arrived since the last scheduled run: the next run
@@ -181,6 +184,7 @@ final class CallAnalysisEngine {
         lastAnalyzedCount = 0
         rerunRequested = false
         pendingUrgent = false
+        analysisHasQuestion = nil
         oldestPendingSince = nil
         fastTask?.cancel()
         fastTask = nil
@@ -211,6 +215,7 @@ final class CallAnalysisEngine {
         debounceTask = nil
         analysisTask?.cancel()
         analysisTask = nil
+        analysisHasQuestion = nil
         fastTask?.cancel()
         fastTask = nil
         clearPendingExcerpts()
@@ -240,6 +245,7 @@ final class CallAnalysisEngine {
             debounceTask = nil
             analysisTask?.cancel()
             analysisTask = nil
+            analysisHasQuestion = nil
             fastTask?.cancel()
             fastTask = nil
             clearPendingExcerpts()
@@ -291,6 +297,21 @@ final class CallAnalysisEngine {
         if isUrgent {
             pendingUrgent = true
             Self.log.notice("question at \(time, format: .fixed(precision: 1), privacy: .public)s: \(text.prefix(80), privacy: .public)")
+            if activeProfile?.allowGeneralKnowledge == false {
+                coachLine = nil
+                sentimentRead = nil
+                sentiment = [:]
+                if analysisTask != nil, analysisHasQuestion == false {
+                    // Do not make a document question wait behind an obsolete
+                    // small-talk/coaching request. All transcript stays in the
+                    // next window; an actual question request keeps its slot.
+                    analysisTask?.cancel()
+                    analysisTask = nil
+                    analysisHasQuestion = nil
+                    rerunRequested = false
+                    clearPendingExcerpts()
+                }
+            }
         }
 
         if isUrgent, fastPathAvailable {
@@ -340,6 +361,7 @@ final class CallAnalysisEngine {
         let floor = pendingUrgent ? questionFloor : minimumInterval
         pendingUrgent = false
         let wait = floor - Date.now.timeIntervalSince(lastAnalysisEnd)
+        analysisHasQuestion = Self.latestQuestion(in: segments.suffix(8).map { ($0.text, $0.source) }) != nil
         analysisTask = Task { [weak self] in
             if wait > 0 {
                 try? await Task.sleep(for: .seconds(wait))
@@ -365,6 +387,7 @@ final class CallAnalysisEngine {
         guard !(profile?.kinds ?? []).isEmpty else {
             status = .error("This profile has no insight kinds — add one in Settings → Profiles.")
             analysisTask = nil
+            analysisHasQuestion = nil
             return
         }
 
@@ -403,15 +426,19 @@ final class CallAnalysisEngine {
         // recent window fills the rest.
         let recent = segments.suffix(8)
         let currentQuestion = Self.latestQuestion(in: recent.map { ($0.text, $0.source) })
+        analysisHasQuestion = currentQuestion != nil
         var references: [KBReference] = []
         if let kb = knowledgeBase {
             if let question = currentQuestion {
                 let strict = profile?.allowGeneralKnowledge == false
                 references = await kb.search(query: question, profileID: profile?.id,
                     topK: strict ? 12 : 2, contextNeighbors: strict ? 1 : 0)
+                guard isActive, !Task.isCancelled else { return }
             }
             let windowQuery = recent.map(\.text).joined(separator: " ")
-            for reference in await kb.search(query: windowQuery, profileID: profile?.id)
+            let windowReferences = await kb.search(query: windowQuery, profileID: profile?.id)
+            guard isActive, !Task.isCancelled else { return }
+            for reference in windowReferences
             where !references.contains(where: {
                 $0.documentName == reference.documentName && $0.text.contains(reference.text)
             }) {
@@ -454,6 +481,7 @@ final class CallAnalysisEngine {
         }
 
         do {
+            guard isActive, !Task.isCancelled else { return }
             let result = try await provider.analyze(request)
             guard isActive, !Task.isCancelled else {
                 if !Task.isCancelled { analysisTask = nil }
@@ -580,6 +608,7 @@ final class CallAnalysisEngine {
         guard !Task.isCancelled else { return }
         lastAnalysisEnd = .now
         analysisTask = nil
+        analysisHasQuestion = nil
 
         if rerunRequested {
             rerunRequested = false
