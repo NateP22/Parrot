@@ -2750,27 +2750,15 @@ enum ProfileTest {
         typealias E = CallAnalysisEngine
         check("excerpt kind is reserved", Insight.docExcerptKind == "doc_excerpt")
         let style = KindResolver.fallbackStyle(forKey: Insight.docExcerptKind)
-        check("excerpt style label", style.label == "From your docs")
+        check("interim excerpt style says it is still checking", style.label == "Checking your docs")
         check("excerpt style not pinned", !style.isPinned)
+        check("interim excerpt shows a short checking status", E.fastPathPendingText == "Checking your docs…")
         check("best candidate picks the max over threshold", E.bestCandidate(scores: [0.1, 0.9, 0.4], threshold: 0.75)?.index == 1)
         check("best candidate nil under threshold", E.bestCandidate(scores: [0.1, 0.6], threshold: 0.75) == nil)
         check("best candidate nil on empty", E.bestCandidate(scores: [], threshold: 0.5) == nil)
         check("excerpt title quotes and capitalizes", E.excerptTitle(for: "  how much is express verification ") == "\u{201C}How much is express verification\u{201D}")
         let long = String(repeating: "word ", count: 40)
         check("excerpt title truncates at a word", E.excerptTitle(for: long).count <= 96 && E.excerptTitle(for: long).hasSuffix("\u{2026}\u{201D}"))
-        let cite = InsightDraft(kindKey: "suggestion", title: "Express verification pricing answered", detail: "x", source: "pricing.md", reply: nil)
-        // Same document, different topic: with one big knowledge-base file every
-        // grounded card cites the same document, so the source alone must not retire an excerpt.
-        let unrelatedCite = InsightDraft(kindKey: "buying_signal", title: "Wants a Wise account", detail: "Banking interest", source: "pricing.md", reply: nil)
-        let stem = InsightDraft(kindKey: "suggestion", title: "Express verification costs £99", detail: "Say the price.", source: nil, reply: "Express is £99, same working day.")
-        let unrelated = InsightDraft(kindKey: "buying_signal", title: "Wants to start next week", detail: "Timeline signal", source: nil, reply: nil)
-        let stemNoReply = InsightDraft(kindKey: "question", title: "Express verification timing unclear", detail: "y", source: nil, reply: nil)
-        check("superseded by a card citing the same document on the same topic", E.excerptSuperseded(question: "how much is express verification", document: "Pricing.MD", by: [cite]))
-        check("not superseded by a same-document card on another topic", !E.excerptSuperseded(question: "how much is express verification", document: "pricing.md", by: [unrelatedCite]))
-        check("superseded by an answer sharing a topic stem", E.excerptSuperseded(question: "how much is express verification", document: "pricing.md", by: [stem]))
-        check("not superseded by an unrelated card", !E.excerptSuperseded(question: "how much is express verification", document: "pricing.md", by: [unrelated]))
-        check("not superseded by a stem match without a reply", !E.excerptSuperseded(question: "how much is express verification", document: "pricing.md", by: [stemNoReply]))
-        check("not superseded by nothing", !E.excerptSuperseded(question: "q", document: "d", by: []))
         // Chunks are Markdown; the card shows prose, not markup.
         check("excerpt display strips heading marks and bold",
               E.excerptDisplayText("### 12.3 The paid route\n- **Standard** £50\n| a | b |\n|---|---|")

@@ -209,7 +209,7 @@ final class CallAnalysisEngine {
         analysisTask = nil
         fastTask?.cancel()
         fastTask = nil
-        pendingExcerpts = []
+        clearPendingExcerpts()
         status = .off
     }
 
@@ -238,6 +238,7 @@ final class CallAnalysisEngine {
             analysisTask = nil
             fastTask?.cancel()
             fastTask = nil
+            clearPendingExcerpts()
             oldestPendingSince = nil  // paused time must not count as staleness
             status = .paused
         } else {
@@ -440,15 +441,10 @@ final class CallAnalysisEngine {
                 if !Task.isCancelled { analysisTask = nil }
                 return
             }
-            // Excerpts shown since the last pass: a grounded Haiku card on the
-            // same question replaces them; otherwise they stay, still true.
-            let shownExcerpts = pendingExcerpts
-            pendingExcerpts = []
-            for shown in shownExcerpts
-            where Self.excerptSuperseded(question: shown.question, document: shown.chunk.documentName,
-                                         by: result.insights) {
-                insights.removeAll { $0.id == shown.id }
-            }
+            // Retrieval alone is not an answer. Remove every interim status
+            // card when analysis returns; only the validated model result is
+            // allowed to remain visible as a claim.
+            clearPendingExcerpts()
             // Merge model sentiment; overlay the computed talk-balance gauge if present.
             var merged = result.sentiment
             if let pct = userTalkPercent, (profile?.gauges.contains { $0.key == "my_dominance" } ?? false) {
@@ -533,6 +529,7 @@ final class CallAnalysisEngine {
             status = .listening
         } catch let error as AnalysisError {
             if isActive, !Task.isCancelled {
+                clearPendingExcerpts()
                 lastAnalyzedCount = previousAnalyzedCount
                 oldestPendingSince = previousPendingSince
                 if case .missingAPIKey = error {
@@ -543,6 +540,7 @@ final class CallAnalysisEngine {
             }
         } catch {
             if isActive, !Task.isCancelled {
+                clearPendingExcerpts()
                 lastAnalyzedCount = previousAnalyzedCount
                 oldestPendingSince = previousPendingSince
                 status = .error(error.localizedDescription)
@@ -610,6 +608,7 @@ final class CallAnalysisEngine {
     /// Best-noul gate for showing an excerpt. Tuned by --doc-answer-eval on the
     /// 2026-09-19 label set (see docs/PERFORMANCE.md). Precision first.
     nonisolated static let docAnswerThreshold = 0.75
+    nonisolated static let fastPathPendingText = "Checking your docs…"
     /// Dev harness observation hook (--copilot-replay): every insertion, wall time.
     var onInsightInserted: ((Insight) -> Void)?
 
@@ -643,8 +642,14 @@ final class CallAnalysisEngine {
     private var fastPathPausedUntil = Date.distantPast
     private(set) var fastPathLastError: String?
     /// Excerpts shown since the last Haiku pass: their chunk is pinned into
-    /// Haiku's references, and a grounded Haiku card supersedes them.
-    private var pendingExcerpts: [(id: UUID, chunk: KBReference, question: String)] = []
+    /// Haiku's references. The interim card is cleared when analysis returns.
+    private var pendingExcerpts: [(id: UUID, chunk: KBReference)] = []
+
+    private func clearPendingExcerpts() {
+        let ids = Set(pendingExcerpts.map(\.id))
+        insights.removeAll { ids.contains($0.id) }
+        pendingExcerpts.removeAll()
+    }
 
     /// Claude mode with a TypeSafe key and documents, and not in a failure
     /// cool-down. Ollama and custom stay local.
@@ -670,10 +675,10 @@ final class CallAnalysisEngine {
             guard let best = Self.bestCandidate(scores: scores, threshold: Self.docAnswerThreshold) else { return }
             let chunk = refs[best.index]
             let card = Insight(kindKey: Insight.docExcerptKind, title: Self.excerptTitle(for: question),
-                               detail: Self.excerptDisplayText(chunk.text), callTime: time,
-                               source: chunk.documentName)
+                               detail: Self.fastPathPendingText, callTime: time,
+                               source: nil)
             insights.insert(card, at: 0)
-            pendingExcerpts.append((card.id, chunk, question))
+            pendingExcerpts.append((card.id, chunk))
             fastPathStats.hits += 1
             Self.log.notice("excerpt p=\(best.probability, format: .fixed(precision: 2), privacy: .public) from \(chunk.documentName, privacy: .public) for: \(question.prefix(80), privacy: .public)")
             onInsightInserted?(card)
@@ -725,19 +730,6 @@ final class CallAnalysisEngine {
             if cells.allSatisfy({ $0.allSatisfy { $0 == "-" || $0 == ":" } }) { return nil }
             return cells.joined(separator: " · ")
         }.joined(separator: "\n")
-    }
-
-    /// A Haiku card supersedes an excerpt only when it is on the same topic
-    /// (shares a stem with the question) AND is grounded: it cites the same
-    /// document or carries a reply. Topic first, because with one big
-    /// knowledge-base file every grounded card "cites the same document", and
-    /// an unrelated pricing card would otherwise retire an eligibility excerpt.
-    nonisolated static func excerptSuperseded(question: String, document: String, by drafts: [InsightDraft]) -> Bool {
-        drafts.contains { draft in
-            guard sharesTopicStem(question, "\(draft.title) \(draft.detail)") else { return false }
-            let citesDocument = draft.source?.lowercased() == document.lowercased()
-            return citesDocument || draft.reply?.nilIfEmpty != nil
-        }
     }
 
     /// The document-search query for a question. A short follow-up ("Can I
