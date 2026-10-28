@@ -32,18 +32,21 @@ final class AudioCaptureManager: NSObject {
     /// `PARROT_AEC_DUMP=1` only: what the canceller was fed, for `--aec-replay`.
     private var aecDump: AECDump?
 
-    /// Which system-audio engine is live. ScreenCaptureKit is preferred when
-    /// Screen Recording is already authorized; otherwise the Core Audio process
-    /// tap uses macOS 15+'s audio-only TCC route.
+    /// Which system-audio engine is live. Prefer authorized ScreenCaptureKit
+    /// and use it for the macOS version with a reproduced tap-startup hang.
     enum CaptureBackend: String { case none, tap, sck }
-    /// Prefer ScreenCaptureKit when its permission is already granted. The
-    /// Core Audio tap's IO-proc registration can block in HAL on some macOS
-    /// releases even though ScreenCaptureKit is ready; using the authorized
-    /// backend avoids that startup deadlock. Keep the audio-only tap path for
-    /// users who have not granted Screen Recording, and retain the diagnostic
-    /// override for reproducing SCK behavior.
-    static func shouldPreferScreenCaptureKit(screenCaptureGranted: Bool, forceSCK: Bool) -> Bool {
-        screenCaptureGranted || forceSCK
+    /// Native GUI capture on 26.5.1 blocks in AudioDeviceStart even after the
+    /// audio-only grant. Keep this workaround bounded to the reproduced OS;
+    /// PermissionFlow requests ScreenCaptureKit's matching grant there.
+    static func requiresScreenCaptureKit(on version: OperatingSystemVersion) -> Bool {
+        version.majorVersion == 26 && version.minorVersion == 5 && version.patchVersion == 1
+    }
+
+    static func shouldPreferScreenCaptureKit(
+        screenCaptureGranted: Bool, forceSCK: Bool,
+        version: OperatingSystemVersion = ProcessInfo.processInfo.operatingSystemVersion
+    ) -> Bool {
+        screenCaptureGranted || forceSCK || requiresScreenCaptureKit(on: version)
     }
     @ObservationIgnored private(set) var captureBackend: CaptureBackend = .none
     /// The live SystemAudioTap on macOS 15+. Typed AnyObject because
@@ -375,8 +378,8 @@ final class AudioCaptureManager: NSObject {
 
     // MARK: - System Audio
 
-    /// Use the already-authorized ScreenCaptureKit backend first; otherwise use
-    /// the macOS 15+ audio-only tap path. Both paths feed handleSystemAudio
+    /// Use authorized or compatibility-required ScreenCaptureKit first;
+    /// otherwise use the macOS 15+ audio-only tap. Both feed handleSystemAudio
     /// with identical 16 kHz mono buffers, so everything downstream is unaware.
     @MainActor
     private func startSystemAudioCapture() async throws {

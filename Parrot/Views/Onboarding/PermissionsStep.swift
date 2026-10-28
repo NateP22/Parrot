@@ -17,7 +17,10 @@ struct PermissionsStep: View {
             return
         }
         micGranted = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-        if #available(macOS 15.0, *) {
+        if PermissionFlow.systemAudioUsesScreenCapture {
+            screenGranted = CGPreflightScreenCaptureAccess()
+            screenAsked = UserDefaults.standard.bool(forKey: PermissionFlow.screenAskedKey)
+        } else if #available(macOS 15.0, *) {
             // Audio-only tap permission. "Granted" is inferred (proven audio or
             // a Screen Recording grant) — there is no status API to ask.
             screenGranted = PermissionFlow.systemAudioLooksGranted()
@@ -29,8 +32,11 @@ struct PermissionsStep: View {
     }
 
     /// The subtitle keeps the real macOS permission name so people can match
-    /// it to the System Settings pane. On 15+ that's the audio-only category.
+    /// it to the System Settings pane and the backend's actual permission.
     private var systemAudioSubtitle: String {
+        if PermissionFlow.systemAudioUsesScreenCapture {
+            return "Screen & System Audio Recording, meeting audio"
+        }
         if #available(macOS 15.0, *) {
             return "System Audio Recording, the other side of the call"
         }
@@ -38,6 +44,9 @@ struct PermissionsStep: View {
     }
 
     private var systemAudioPendingHint: String {
+        if PermissionFlow.systemAudioUsesScreenCapture {
+            return "Allow Screen & System Audio Recording for Parrot. Follow macOS's restart request if shown, then return here."
+        }
         if #available(macOS 15.0, *) {
             return "Clicked Allow on the macOS prompt? You're set — this row turns green the first time Parrot hears meeting audio. No restart needed."
         }
@@ -51,7 +60,9 @@ struct PermissionsStep: View {
             Text("Start with permissions")
                 .font(Theme.Typography.title())
 
-            Text("Parrot needs two macOS permissions to hear your calls. Audio only: it never sees your screen, and nothing leaves your Mac.")
+            Text(PermissionFlow.systemAudioUsesScreenCapture
+                 ? "Parrot needs Microphone and Screen & System Audio Recording permissions to hear your calls. Parrot records audio only."
+                 : "Parrot needs two macOS permissions to hear your calls. Audio only: it never sees your screen, and nothing leaves your Mac.")
                 .font(Theme.Typography.body)
                 .foregroundStyle(Theme.Colors.ink2)
                 .multilineTextAlignment(.center)

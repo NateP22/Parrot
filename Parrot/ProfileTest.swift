@@ -153,12 +153,22 @@ enum ProfileTest {
     }
 
     static func testSystemAudioBackendPreference() {
+        let audioOnlyOS = OperatingSystemVersion(majorVersion: 15, minorVersion: 7, patchVersion: 0)
         check("audio backend: existing Screen Recording permission prefers ScreenCaptureKit",
-              AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: true, forceSCK: false))
+              AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: true, forceSCK: false, version: audioOnlyOS))
         check("audio backend: diagnostic override prefers ScreenCaptureKit",
-              AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: false, forceSCK: true))
+              AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: false, forceSCK: true, version: audioOnlyOS))
         check("audio backend: audio-only users retain the Core Audio tap route",
-              !AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: false, forceSCK: false))
+              !AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: false, forceSCK: false, version: audioOnlyOS))
+        check("audio backend: reproduced 26.5.1 tap hang routes through ScreenCaptureKit before permission",
+              AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: false, forceSCK: false,
+                version: OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 1)))
+        for version in [OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 0),
+                        OperatingSystemVersion(majorVersion: 26, minorVersion: 5, patchVersion: 2),
+                        OperatingSystemVersion(majorVersion: 26, minorVersion: 6, patchVersion: 0)] {
+            check("audio backend: workaround does not infer a hang on \(version.majorVersion).\(version.minorVersion).\(version.patchVersion)",
+                  !AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: false, forceSCK: false, version: version))
+        }
     }
 
     @MainActor
@@ -2742,6 +2752,20 @@ enum ProfileTest {
               PermissionFlow.nextSystemAudioStep(proven: false, screenGranted: false, askedBefore: true, settingsShownBefore: false) == .openSettings)
         check("sysaudio: after prompt + Settings it stops gatekeeping",
               PermissionFlow.nextSystemAudioStep(proven: false, screenGranted: false, askedBefore: true, settingsShownBefore: true) == .granted)
+        check("sysaudio: ScreenCaptureKit waits for an actual grant after its prompt",
+              !PermissionFlow.mayStartSystemAudio(after: .promptShown, requiresScreenCapture: true))
+        check("sysaudio: ScreenCaptureKit cannot start from a denied grant",
+              !PermissionFlow.mayStartSystemAudio(after: .openSettings, requiresScreenCapture: true))
+        check("sysaudio: retry after ScreenCaptureKit grant starts",
+              PermissionFlow.mayStartSystemAudio(after: .granted, requiresScreenCapture: true))
+        check("sysaudio: audio-only prompt preserves optimistic startup",
+              PermissionFlow.mayStartSystemAudio(after: .promptShown, requiresScreenCapture: false))
+        check("sysaudio: stale tap proof cannot satisfy ScreenCaptureKit permission",
+              !PermissionFlow.systemAudioIsGranted(provenTap: true, screenGranted: false, requiresScreenCapture: true))
+        check("sysaudio: readable screen grant satisfies the compatibility route",
+              PermissionFlow.systemAudioIsGranted(provenTap: false, screenGranted: true, requiresScreenCapture: true))
+        check("sysaudio: proven tap still satisfies the audio-only route",
+              PermissionFlow.systemAudioIsGranted(provenTap: true, screenGranted: false, requiresScreenCapture: false))
     }
 
     static func testMicrophoneInputFormat() {

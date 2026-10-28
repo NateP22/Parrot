@@ -113,12 +113,9 @@ final class SystemAudioTap {
             let aggregateMs = ms(t1)
             let t2 = ProcessInfo.processInfo.systemUptime
 
-            // Register the C IOProc directly. On macOS 26.5.1 the block
-            // overload can hang in HALC_ProxyIOContext while reporting stream
-            // usage for this private tap aggregate; the recording task then
-            // never reaches `isCapturing = true`. The callback still funnels
-            // through our serial queue so format changes and conversion remain
-            // ordered as they were with the block overload.
+            // The C callback funnels through our serial conversion queue.
+            // Switching callback APIs did not eliminate the 26.5.1 HAL-start
+            // hang; AudioCaptureManager routes that OS through ScreenCaptureKit.
             let clientData = Unmanaged.passUnretained(self).toOpaque()
             err = AudioDeviceCreateIOProcID(aggregateID, parrotSystemAudioIOProc, clientData, &ioProcID)
             guard err == noErr, ioProcID != nil else {

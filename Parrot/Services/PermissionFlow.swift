@@ -2,8 +2,8 @@ import AVFoundation
 import AppKit
 import CoreGraphics
 
-/// The one place that decides how to ask for System Audio (macOS 15+) /
-/// Screen Recording (macOS 14) / Microphone. Both the onboarding permissions
+/// The one place that decides how to ask for audio-only or Screen Recording
+/// access for the selected backend, plus Microphone. Both onboarding permissions
 /// step and the record-button preflight route through here, so the "first ask
 /// shows the OS prompt AND opens System Settings on top of it" double-dialog
 /// bug can't come back.
@@ -72,6 +72,24 @@ enum PermissionFlow {
     static let tapAskedKey = "hasRequestedSystemAudioTap"
     static let tapSettingsShownKey = "systemAudioSettingsShown"
 
+    /// macOS 14 and the exact tap-hang compatibility route need the readable
+    /// Screen Recording grant. Other macOS 15+ versions retain audio-only TCC.
+    static var systemAudioUsesScreenCapture: Bool {
+        if #available(macOS 15.0, *) {
+            return AudioCaptureManager.requiresScreenCaptureKit(
+                on: ProcessInfo.processInfo.operatingSystemVersion)
+        }
+        return true
+    }
+
+    static func mayStartSystemAudio(after step: ScreenCaptureStep, requiresScreenCapture: Bool) -> Bool {
+        step == .granted || (step == .promptShown && !requiresScreenCapture)
+    }
+
+    static func systemAudioIsGranted(provenTap: Bool, screenGranted: Bool, requiresScreenCapture: Bool) -> Bool {
+        screenGranted || (provenTap && !requiresScreenCapture)
+    }
+
     /// Pure decision — covered by `--profile-test`. `screenGranted` counts as
     /// granted because ScreenCaptureKit remains a full fallback backend.
     static func nextSystemAudioStep(proven: Bool, screenGranted: Bool,
@@ -87,6 +105,7 @@ enum PermissionFlow {
     @available(macOS 15.0, *)
     @discardableResult
     static func requestSystemAudioCapture() -> ScreenCaptureStep {
+        if systemAudioUsesScreenCapture { return requestScreenCapture() }
         let defaults = UserDefaults.standard
         let step = nextSystemAudioStep(
             proven: defaults.bool(forKey: tapProvenKey),
@@ -115,7 +134,10 @@ enum PermissionFlow {
 
     /// Silent status for onboarding UI — must never fire a prompt.
     static func systemAudioLooksGranted() -> Bool {
-        UserDefaults.standard.bool(forKey: tapProvenKey) || CGPreflightScreenCaptureAccess()
+        systemAudioIsGranted(
+            provenTap: UserDefaults.standard.bool(forKey: tapProvenKey),
+            screenGranted: CGPreflightScreenCaptureAccess(),
+            requiresScreenCapture: systemAudioUsesScreenCapture)
     }
 
     /// notDetermined → the one official OS prompt; denied/restricted → Settings.
