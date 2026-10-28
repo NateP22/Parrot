@@ -120,7 +120,7 @@ final class SystemAudioTap {
             // through our serial queue so format changes and conversion remain
             // ordered as they were with the block overload.
             let clientData = Unmanaged.passUnretained(self).toOpaque()
-            err = AudioDeviceCreateIOProcID(aggregateID, Self.ioProc, clientData, &ioProcID)
+            err = AudioDeviceCreateIOProcID(aggregateID, SystemAudioTap.ioProc, clientData, &ioProcID)
             guard err == noErr, ioProcID != nil else {
                 throw TapError.coreAudio(stage: "IO proc", status: err)
             }
