@@ -213,7 +213,9 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         30 words in one or two plain sentences. Include "evidence_quote": a contiguous \
         excerpt of complete sentences copied exactly from the cited reference, at most \
         200 words. Preserve every condition needed to support the answer. The evidence \
-        is kept behind Details; it is not the spoken answer. Missing evidence means abstain.
+        is kept behind Details; it is not the spoken answer. Without sufficient evidence, \
+        leave source/evidence_quote empty and begin reply exactly "I haven't verified that." \
+        followed by ONE concrete check or reproduction step, without a product claim.
 
         EVERY insight that flags an unresolved item (a concern, an unanswered question, \
         an obstacle) MUST set "reply": one short, concrete line the user could say right now \
@@ -389,7 +391,9 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
             exact supporting passage in evidence_quote, with complete source sentences and \
             every relevant condition; source must be the exact document name. Do not diagnose \
             an unverified cause, claim a fix or promise unsupported behavior. If the passage \
-            cannot fully answer the question, return no answer card. A separate evidence \
+            cannot fully answer the question, leave source/evidence_quote empty and begin \
+            reply exactly "I haven't verified that." followed by one useful verification \
+            step, with no asserted product behavior or diagnosis. A separate evidence \
             review must pass before any answer is displayed. Suggestions never mean the client \
             issue was resolved.
             """)
@@ -449,7 +453,7 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         let strictQuestion = request.currentQuestion != nil && !request.allowGeneralKnowledge
         let reviewed: [InsightDraft]
         if strictQuestion, let question = request.currentQuestion {
-            if let candidate = grounded.first(where: { $0.source != nil && $0.evidenceQuote != nil }) {
+            if let candidate = grounded.first(where: { $0.answerKey != nil && $0.reply != nil }) {
                 let approved = try await reviewAnswer(candidate, question: question,
                                                       references: request.references, apiKey: apiKey)
                 reviewed = [Self.applyingEvidenceReview(candidate, approved: approved)]
@@ -768,6 +772,13 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                   question != nil,
                   directAnswerKinds.contains(draft.kindKey) || draft.reply != nil || draft.source != nil else { return draft }
 
+            if draft.source == nil, draft.evidenceQuote == nil,
+               let reply = draft.reply?.trimmingCharacters(in: .whitespacesAndNewlines),
+               isActionableAbstention(reply) {
+                return InsightDraft(kindKey: draft.kindKey, title: "Check first", detail: reply,
+                                    source: nil, reply: reply, answerKey: question)
+            }
+
             guard let source = draft.source,
                   source.lowercased() != "general knowledge",
                   Set(knownDocuments.map { $0.lowercased() }).contains(source.lowercased()),
@@ -817,6 +828,18 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         return count > 0 && count <= 2
     }
 
+    /// This only admits a candidate for review, never an unchecked answer.
+    static func isActionableAbstention(_ text: String) -> Bool {
+        let prefix = "I haven't verified that."
+        guard text.replacingOccurrences(of: "’", with: "'").hasPrefix(prefix),
+              isConciseSpokenReply(text) else { return false }
+        let step = String(text.dropFirst(prefix.count))
+        let words = step.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        let checks: Set<String> = ["check", "compare", "test", "reproduce", "share", "show", "send", "try"]
+        return words.count >= 4 && !checks.isDisjoint(with: words)
+    }
+
     /// Matching a substring is unsafe: it can remove a preceding "not" or
     /// condition. Compare complete source sentences, across every retrieved
     /// passage of the cited document. Never stitch separate passages.
@@ -861,15 +884,20 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         description offered as instructions for the opposite desired state. Reject
         unverified diagnoses, fix claims, guarantees and claims of client resolution.
         Silence about support is not proof that a feature is impossible. If uncertain,
-        return false. Return only the three required boolean judgments.
+        return false. In needs_check mode, the reply must explicitly acknowledge that
+        support is unverified and propose one useful check for this question. It must
+        make NO product-behavior, cause, fix, guarantee or resolution claim. Assess all
+        three judgments against that narrower purpose; a vague "check it" is insufficient.
+        Return only the three required boolean judgments.
         """
 
     static func evidenceReviewBody(_ draft: InsightDraft, question: String,
                                    references: [KBReference]) throws -> [String: Any] {
         let passages = references.filter {
-            $0.documentName.caseInsensitiveCompare(draft.source ?? "") == .orderedSame
+            draft.source == nil || $0.documentName.caseInsensitiveCompare(draft.source ?? "") == .orderedSame
         }.map(\.text)
         let content: [String: Any] = ["question": question, "answer": draft.reply ?? "",
+                                     "mode": draft.source == nil ? "needs_check" : "grounded",
                                      "evidence_quote": draft.evidenceQuote ?? "", "passages": passages]
         let contentData = try JSONSerialization.data(withJSONObject: content, options: [.sortedKeys])
         let schema: [String: Any] = [
@@ -981,6 +1009,7 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         if drafts.contains(where: {
             directAnswerKinds.contains($0.kindKey) && $0.source != nil
         }) { return drafts }
+        if drafts.contains(where: { $0.answerKey != nil && $0.reply != nil }) { return drafts }
         guard let kind = kinds.first(where: { directAnswerKinds.contains($0.key) })?.key
                 ?? kinds.first?.key else { return drafts }
         return drafts + [checkFirstDraft(kindKey: kind, answerKey: question)]

@@ -2757,6 +2757,27 @@ enum ProfileTest {
         check("unapproved candidate cannot display generated answer or source",
               unapproved.detail == A.checkFirstMessage && unapproved.reply == nil && unapproved.source == nil)
         check("abstention retains its question identity", unapproved.answerKey == question)
+        let uncertainty = "I haven't verified that. Let's test the export on a copy."
+        let uncertainDraft = InsightDraft(kindKey: "suggestion", title: "Unknown cause",
+                                         detail: "An invented diagnosis.", source: nil, reply: uncertainty)
+        let uncertain = A.validatingGroundedAnswers([uncertainDraft], references: [],
+            knownDocuments: [], question: question, allowGeneralKnowledge: false)[0]
+        check("useful uncertainty is only a source-free candidate for review",
+              uncertain.reply == uncertainty && uncertain.detail == uncertainty &&
+              uncertain.source == nil && uncertain.evidenceQuote == nil && uncertain.answerKey == question)
+        check("vague uncertainty is not an actionable candidate",
+              !A.isActionableAbstention("I haven't verified that. Check it."))
+        check("unsupported product answer is not an uncertainty candidate",
+              !A.isActionableAbstention("It always fixes the export."))
+        check("failed uncertainty review still removes the suggested step",
+              A.applyingEvidenceReview(uncertain, approved: false).reply == nil)
+        let uncertaintyBody = try? A.evidenceReviewBody(uncertain, question: question, references: [reference])
+        let uncertaintyMessages = uncertaintyBody?["messages"] as? [[String: String]]
+        let uncertaintyText = uncertaintyMessages?.first?["content"] ?? ""
+        let uncertaintyContent = (try? JSONSerialization.jsonObject(with: Data(uncertaintyText.utf8))) as? [String: Any]
+        check("uncertainty review is explicitly labeled and sees supplied context",
+              uncertaintyContent?["mode"] as? String == "needs_check" &&
+              uncertaintyContent?["passages"] as? [String] == [quote])
         check("approved candidate preserves its short answer and evidence",
               A.applyingEvidenceReview(accepted[0], approved: true).reply == generated.reply)
         let reviewBody = try? A.evidenceReviewBody(generated, question: question,
@@ -2867,8 +2888,8 @@ enum ProfileTest {
             kinds: [ProfileKind(id: UUID(), key: "suggestion", label: "Suggestion",
                                 colorHex: "000000", iconSystemName: "text.bubble",
                                 triggerDescription: "", isPinned: false, priority: 0)], gauges: [])
-        func run(_ reply: EvidenceTransport.Reply) -> AnalysisResult? {
-            EvidenceTransport.configure([.response(main, 200), reply])
+        func run(_ reply: EvidenceTransport.Reply, generation: Data? = nil) -> AnalysisResult? {
+            EvidenceTransport.configure([.response(generation ?? main, 200), reply])
             var result: AnalysisResult?
             var finished = false
             let task = Task {
@@ -2894,6 +2915,17 @@ enum ProfileTest {
         let review = (try? JSONSerialization.jsonObject(with: Data(reviewText.utf8))) as? [String: Any]
         check("transport: actual review receives only the cited document passages",
               review?["passages"] as? [String] == [evidence])
+        var uncertainPayload = payload
+        uncertainPayload["insights"] = [["kind": "suggestion", "title": "Unknown",
+                                        "detail": "An invented diagnosis.", "source": "",
+                                        "reply": "I haven't verified that. Let's test the export on a copy.",
+                                        "evidence_quote": "", "supersedes": ""]]
+        let uncertainPacket = packet(String(decoding:
+            try! JSONSerialization.data(withJSONObject: uncertainPayload), as: UTF8.self))
+        let uncertain = run(.response(packet(yes), 200), generation: uncertainPacket)
+        check("transport: reviewed uncertainty has one useful step and no fake source",
+              uncertain?.insights.count == 1 && uncertain?.insights.first?.reply?.contains("test the export") == true &&
+              uncertain?.insights.first?.source == nil)
         for failure in [
             EvidenceTransport.Reply.response(packet(no), 200),
             .response(packet(yes, stop: "refusal"), 200),
