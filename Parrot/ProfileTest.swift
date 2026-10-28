@@ -2712,16 +2712,24 @@ enum ProfileTest {
               !escapedReceipt.contains("<") && escapedReceipt.contains("\\u003C") &&
               decodedReceipt?["title"] == craftedTitle)
         let linkedReceipt = A.reportInsightReceipt(kind: "suggestion", title: "From your docs",
-            source: source, reply: generated.reply, callTime: 45, citedPassage: quote)
+            source: source, reply: generated.reply, callTime: 45, cardDetail: quote)
         let linked = (try? JSONSerialization.jsonObject(with: Data(linkedReceipt.utf8))) as? [String: Any]
-        check("report receipt links the source passage to a transcript anchor without claiming resolution",
+        check("report receipt links card data to a transcript anchor without claiming resolution",
               (linked?["transcript_anchor_seconds"] as? Double) == 45 &&
-              linked?["cited_passage"] as? String == quote && linked?["resolved"] == nil)
+              linked?["card_detail"] as? String == quote && linked?["resolved"] == nil)
         let invalidAnchor = A.reportInsightReceipt(kind: "suggestion", title: "Check first",
-            source: nil, reply: nil, callTime: .infinity, citedPassage: "Not sourced")
+            source: nil, reply: nil, callTime: .infinity, cardDetail: "Not sourced")
         let unlinked = (try? JSONSerialization.jsonObject(with: Data(invalidAnchor.utf8))) as? [String: Any]
-        check("report receipt omits invalid time and an unsourced evidence label",
+        check("report receipt omits invalid time and never certifies an unsourced evidence label",
               unlinked != nil && unlinked?["transcript_anchor_seconds"] == nil && unlinked?["cited_passage"] == nil)
+        for label in ["general knowledge", source] {
+            let legacy = A.reportInsightReceipt(kind: "suggestion", title: "Older card",
+                source: label, reply: "An earlier suggestion", cardDetail: "Generated explanation, not an original quote")
+            let record = (try? JSONSerialization.jsonObject(with: Data(legacy.utf8))) as? [String: Any]
+            check("report never certifies older card detail as document evidence: \(label)",
+                  record?["reported_source"] as? String == label && record?["cited_passage"] == nil &&
+                  record?["card_detail"] as? String == "Generated explanation, not an original quote")
+        }
         check("report cannot infer document absence or confirmed fixes from missing context",
               A.summarySystemPrompt(counterpart: "the client", template: .standard)
                 .contains("Never infer that no"))
@@ -5660,8 +5668,9 @@ enum ProfileTest {
         provided) mattered to them — make sure the report covers what was said there.
 
         Live-card receipts are AI-generated suggestions, never spoken answers, \
-        client acceptance or confirmed fixes. A source records that the card cited \
-        a document; it does not prove the client used the suggestion. This report \
+        client acceptance or confirmed fixes. A reported_source is the card's label; \
+        it can be general knowledge or an unverified attribution. Neither that label \
+        nor card_detail alone proves documentary support or client action. This report \
         request does not include the whole document library. Never infer that no \
         documents were supplied, no sourced cards existed, or a feature is unsupported \
         because document text is absent here. Describe questions, AI suggestions and \

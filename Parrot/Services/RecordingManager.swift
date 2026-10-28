@@ -1045,7 +1045,7 @@ final class RecordingManager {
         let insightTitles = meeting.sortedInsights.map {
             ClaudeAnalysisProvider.reportInsightReceipt(kind: $0.kindRaw, title: $0.title,
                                                          source: $0.source, reply: $0.reply,
-                                                         callTime: $0.callTime, citedPassage: $0.detail)
+                                                         callTime: $0.callTime, cardDetail: $0.detail)
         }
         let instructions = meeting.profile?.tone ?? (UserDefaults.standard.string(forKey: "copilotInstructions") ?? "")
         let counterpart = meeting.profile?.counterpart ?? "the other person"

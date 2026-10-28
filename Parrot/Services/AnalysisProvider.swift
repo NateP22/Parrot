@@ -608,8 +608,9 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         provided) mattered to them — make sure the report covers what was said there.
 
         Live-card receipts are AI-generated suggestions, never spoken answers, \
-        client acceptance or confirmed fixes. A source records that the card cited \
-        a document; it does not prove the client used the suggestion. This report \
+        client acceptance or confirmed fixes. A reported_source is the card's label; \
+        it can be general knowledge or an unverified attribution. Neither that label \
+        nor card_detail alone proves documentary support or client action. This report \
         request does not include the whole document library. Never infer that no \
         documents were supplied, no sourced cards existed, or a feature is unsupported \
         because document text is absent here. Describe questions, AI suggestions and \
@@ -682,16 +683,17 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
     /// Preserve citation/reply evidence when handing live cards to a report.
     /// Never serialize a handled checkbox as client acceptance or resolution.
     static func reportInsightReceipt(kind: String, title: String, source: String?, reply: String?,
-                                     callTime: TimeInterval? = nil, citedPassage: String? = nil) -> String {
+                                     callTime: TimeInterval? = nil, cardDetail: String? = nil) -> String {
         var record: [String: Any] = ["authorship": "AI suggestion, not a spoken or confirmed outcome",
                       "kind": kind, "title": title,
-                      "source": source ?? "", "suggested_reply": reply ?? ""]
+                      "reported_source": source ?? "", "suggested_reply": reply ?? ""]
         // The anchor links a card to transcript context, never to arrival time
-        // or proof that the client followed it. Keep the cited block for review.
+        // or proof that the client followed it. Older cards may contain generated
+        // detail, so preserve it as card data without certifying it as a quote.
         if let callTime, callTime.isFinite {
             record["transcript_anchor_seconds"] = max(0, callTime)
         }
-        if let citedPassage, source != nil { record["cited_passage"] = citedPassage }
+        if let cardDetail { record["card_detail"] = cardDetail }
         guard let data = try? JSONSerialization.data(withJSONObject: record, options: [.sortedKeys]) else { return "" }
         return String(decoding: data, as: UTF8.self)
             .replacingOccurrences(of: "<", with: "\\u003C")
