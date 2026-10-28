@@ -2601,6 +2601,44 @@ enum ProfileTest {
         check("strict answer retains its matching source",
               accepted.first?.source == source)
 
+        let laterPassage = A.validatingGroundedAnswers(
+            [generated],
+            references: [KBReference(documentName: source, note: nil,
+                                     text: "A separate passage describes the export format."),
+                         reference],
+            knownDocuments: [source], question: question, allowGeneralKnowledge: false
+        )
+        check("strict answer checks later passages of the same document",
+              laterPassage.first?.reply == quote && laterPassage.first?.source == source)
+
+        let partialQuote = "export settings remove the page number."
+        let clipped = InsightDraft(kindKey: "answer", title: "Export answer",
+                                   detail: partialQuote, source: source,
+                                   reply: partialQuote, evidenceQuote: partialQuote)
+        for passage in [
+            "Do not assume export settings remove the page number.",
+            "Only for legacy files, export settings remove the page number.",
+        ] {
+            let result = A.validatingGroundedAnswers(
+                [clipped],
+                references: [KBReference(documentName: source, note: nil, text: passage)],
+                knownDocuments: [source],
+                question: "Which export settings remove the page number?",
+                allowGeneralKnowledge: false
+            )
+            check("strict answer rejects a clipped warning or condition: \(passage)",
+                  result.first?.detail == A.checkFirstMessage && result.first?.source == nil)
+        }
+        check("whole sentence can follow another sentence",
+              A.containsCompleteSourceSentence(quote, in: "Read the guide first. " + quote))
+        check("whole sentence can be a Markdown list item",
+              A.containsCompleteSourceSentence(quote, in: "- " + quote))
+        check("whole sentence can be a numbered Markdown item",
+              A.containsCompleteSourceSentence(quote, in: "1. " + quote))
+        check("separate passages cannot be stitched into one quote",
+              !A.containsCompleteSourceSentence(quote,
+                  in: "For captions beside photos. Choose Beside image and enable Credit Below Caption."))
+
         let wrongQuote = InsightDraft(
             kindKey: "suggestion", title: "Wrong claim",
             detail: "Re-import to fix it.", source: source,

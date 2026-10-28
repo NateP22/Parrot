@@ -747,10 +747,10 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                   !quote.isEmpty,
                   quoteWordCount(quote) <= 20,
                   isSingleSentenceQuote(quote),
-                  let reference = references.first(where: {
+                  references.contains(where: {
                       $0.documentName.caseInsensitiveCompare(source) == .orderedSame
+                          && containsCompleteSourceSentence(quote, in: $0.text)
                   }),
-                  reference.text.range(of: quote) != nil,
                   let question,
                   hasSufficientQuestionCoverage(question: question, quote: quote) else {
                 return checkFirstDraft(kindKey: draft.kindKey)
@@ -777,6 +777,26 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         guard let last = trimmed.last, ".!?".contains(last) else { return false }
         let body = trimmed.dropLast()
         return !body.contains(where: { ".!?".contains($0) })
+    }
+
+    /// Matching a substring is unsafe: it can remove a preceding "not" or
+    /// condition. Compare complete source sentences, across every retrieved
+    /// passage of the cited document. Never stitch separate passages.
+    static func containsCompleteSourceSentence(_ quote: String, in reference: String) -> Bool {
+        var found = false
+        reference.enumerateSubstrings(in: reference.startIndex..<reference.endIndex,
+                                     options: .bySentences) { sentence, _, _, stop in
+            guard let sentence else { return }
+            let candidate = sentence
+                .replacingOccurrences(of: #"^\s*(?:(?:[-*+]|\d+[.)])\s+|>\s*)?"#,
+                                      with: "", options: .regularExpression)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if candidate == quote {
+                found = true
+                stop = true
+            }
+        }
+        return found
     }
 
     /// Avoid accepting an exact but merely adjacent source sentence. At least
