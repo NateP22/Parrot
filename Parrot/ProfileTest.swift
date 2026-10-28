@@ -36,6 +36,7 @@ enum ProfileTest {
         testAIUsageCost()
         testPermissionFlow()
         testMicrophoneInputFormat()
+        testSystemAudioBackendPreference()
         testMicWatchdog()
         testCaptureClock()
         testEchoGate()
@@ -149,6 +150,15 @@ enum ProfileTest {
         testUpdateNotice()
         print(failures == 0 ? "ALL PASS" : "FAILURES: \(failures)")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    static func testSystemAudioBackendPreference() {
+        check("audio backend: existing Screen Recording permission prefers ScreenCaptureKit",
+              AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: true, forceSCK: false))
+        check("audio backend: diagnostic override prefers ScreenCaptureKit",
+              AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: false, forceSCK: true))
+        check("audio backend: audio-only users retain the Core Audio tap route",
+              !AudioCaptureManager.shouldPreferScreenCaptureKit(screenCaptureGranted: false, forceSCK: false))
     }
 
     @MainActor

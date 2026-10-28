@@ -32,10 +32,19 @@ final class AudioCaptureManager: NSObject {
     /// `PARROT_AEC_DUMP=1` only: what the canceller was fed, for `--aec-replay`.
     private var aecDump: AECDump?
 
-    /// Which system-audio engine is live. The Core Audio process tap (macOS 15+,
-    /// audio-only TCC — no Screen Recording ask) is preferred; ScreenCaptureKit
-    /// is the 14.x path and the silent-tap rescue fallback.
+    /// Which system-audio engine is live. ScreenCaptureKit is preferred when
+    /// Screen Recording is already authorized; otherwise the Core Audio process
+    /// tap uses macOS 15+'s audio-only TCC route.
     enum CaptureBackend: String { case none, tap, sck }
+    /// Prefer ScreenCaptureKit when its permission is already granted. The
+    /// Core Audio tap's IO-proc registration can block in HAL on some macOS
+    /// releases even though ScreenCaptureKit is ready; using the authorized
+    /// backend avoids that startup deadlock. Keep the audio-only tap path for
+    /// users who have not granted Screen Recording, and retain the diagnostic
+    /// override for reproducing SCK behavior.
+    static func shouldPreferScreenCaptureKit(screenCaptureGranted: Bool, forceSCK: Bool) -> Bool {
+        screenCaptureGranted || forceSCK
+    }
     @ObservationIgnored private(set) var captureBackend: CaptureBackend = .none
     /// The live SystemAudioTap on macOS 15+. Typed AnyObject because
     /// @available(macOS 15) types can't be stored properties at target 14.
@@ -366,14 +375,18 @@ final class AudioCaptureManager: NSObject {
 
     // MARK: - System Audio
 
-    /// Tap-first on macOS 15+ (audio-only permission), ScreenCaptureKit on 14.x
-    /// or whenever the tap can't start. Both paths feed handleSystemAudio with
-    /// identical 16 kHz mono buffers, so everything downstream is unaware.
+    /// Use the already-authorized ScreenCaptureKit backend first; otherwise use
+    /// the macOS 15+ audio-only tap path. Both paths feed handleSystemAudio
+    /// with identical 16 kHz mono buffers, so everything downstream is unaware.
     @MainActor
     private func startSystemAudioCapture() async throws {
-        // ponytail: escape hatch for field debugging of the new path —
-        // `defaults write com.uygar.parrot forceSCKCapture -bool YES`.
-        if #available(macOS 15.0, *), !UserDefaults.standard.bool(forKey: "forceSCKCapture") {
+        // This remains useful for field debugging; granted SCK permission also
+        // selects the tested backend without needing a persistent defaults flag.
+        let preferSCK = Self.shouldPreferScreenCaptureKit(
+            screenCaptureGranted: CGPreflightScreenCaptureAccess(),
+            forceSCK: UserDefaults.standard.bool(forKey: "forceSCKCapture")
+        )
+        if #available(macOS 15.0, *), !preferSCK {
             do {
                 try startTapCapture()
                 return
