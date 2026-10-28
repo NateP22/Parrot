@@ -120,7 +120,7 @@ final class SystemAudioTap {
             // through our serial queue so format changes and conversion remain
             // ordered as they were with the block overload.
             let clientData = Unmanaged.passUnretained(self).toOpaque()
-            err = AudioDeviceCreateIOProcID(aggregateID, SystemAudioTap.ioProc, clientData, &ioProcID)
+            err = AudioDeviceCreateIOProcID(aggregateID, parrotSystemAudioIOProc, clientData, &ioProcID)
             guard err == noErr, ioProcID != nil else {
                 throw TapError.coreAudio(stage: "IO proc", status: err)
             }
@@ -239,24 +239,12 @@ final class SystemAudioTap {
         deliveryQueue.async { onBuffer(converted) }
     }
 
-    /// Core Audio invokes the IOProc on its device callback thread. Run the
-    /// conversion on our serial queue and finish before returning so the
-    /// borrowed AudioBufferList remains valid and format changes stay ordered.
-    private static func ioProc(
-        _ device: AudioObjectID,
-        _ now: UnsafePointer<AudioTimeStamp>,
-        _ inputData: UnsafePointer<AudioBufferList>,
-        _ inputTime: UnsafePointer<AudioTimeStamp>,
-        _ outputData: UnsafeMutablePointer<AudioBufferList>,
-        _ outputTime: UnsafePointer<AudioTimeStamp>,
-        _ clientData: UnsafeMutableRawPointer?
-    ) -> OSStatus {
-        guard let clientData else { return noErr }
-        let tap = Unmanaged<SystemAudioTap>.fromOpaque(clientData).takeUnretainedValue()
-        tap.queue.sync {
-            tap.deliver(inputData, at: inputTime.pointee)
+    /// Called by the C IOProc trampoline on Core Audio's callback thread.
+    /// Finish synchronously so the borrowed AudioBufferList remains valid.
+    fileprivate func processIOCallback(_ inputData: UnsafePointer<AudioBufferList>, at time: AudioTimeStamp) {
+        queue.sync {
+            deliver(inputData, at: time)
         }
-        return noErr
     }
 
     // MARK: - Format handling
@@ -316,4 +304,22 @@ final class SystemAudioTap {
         guard err == noErr, objectID != kAudioObjectUnknown else { return nil }
         return objectID
     }
+}
+
+/// Core Audio requires a non-capturing C function pointer. Keep this at file
+/// scope; an instance or metatype method reference is not convertible here.
+@available(macOS 15.0, *)
+private func parrotSystemAudioIOProc(
+    _ device: AudioObjectID,
+    _ now: UnsafePointer<AudioTimeStamp>,
+    _ inputData: UnsafePointer<AudioBufferList>,
+    _ inputTime: UnsafePointer<AudioTimeStamp>,
+    _ outputData: UnsafeMutablePointer<AudioBufferList>,
+    _ outputTime: UnsafePointer<AudioTimeStamp>,
+    _ clientData: UnsafeMutableRawPointer?
+) -> OSStatus {
+    guard let clientData else { return noErr }
+    let tap = Unmanaged<SystemAudioTap>.fromOpaque(clientData).takeUnretainedValue()
+    tap.processIOCallback(inputData, at: inputTime.pointee)
+    return noErr
 }
