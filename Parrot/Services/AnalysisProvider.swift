@@ -113,7 +113,9 @@ enum AnalysisError: LocalizedError {
 
 /// Calls the Claude API (Haiku — fastest model) for low-latency structured insights.
 final class ClaudeAnalysisProvider: AnalysisProvider {
-    static let model = "claude-haiku-4-5"
+    static let model = "claude-haiku-5-5"
+    static let analysisEffort = "high"
+    static let reportingEffort = "medium"
     private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
 
     var isConfigured: Bool {
@@ -409,10 +411,15 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
 
         let body: [String: Any] = [
             "model": Self.model,
-            "max_tokens": 1024,
+            // Haiku 5.5 counts adaptive thinking against max_tokens; leave
+            // room for it and the small structured response.
+            "max_tokens": 4096,
             "system": sys,
             "messages": [["role": "user", "content": userContent]],
-            "output_config": ["format": ["type": "json_schema", "schema": schemaObj]],
+            "output_config": [
+                "effort": Self.analysisEffort,
+                "format": ["type": "json_schema", "schema": schemaObj],
+            ],
         ]
 
         let data = try await performRequest(body: body, apiKey: apiKey)
@@ -548,9 +555,10 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                                               bookmarks: bookmarks, instructions: instructions)
         let body: [String: Any] = [
             "model": Self.model,
-            "max_tokens": 1700,
+            "max_tokens": 4096,
             "system": Self.summarySystemPrompt(counterpart: counterpart, template: template),
             "messages": [["role": "user", "content": content]],
+            "output_config": ["effort": Self.reportingEffort],
         ]
 
         let data = try await performRequest(body: body, apiKey: apiKey)
@@ -606,10 +614,11 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                                                instructions: instructions, counterpart: counterpart)
         let body: [String: Any] = [
             "model": Self.model,
-            // Receipts add a stamp per bullet — a little more room than before.
-            "max_tokens": 1400,
+            // Leave room for Haiku 5.5's default adaptive thinking and the report.
+            "max_tokens": 4096,
             "system": Self.coachingSystemPrompt(counterpart: counterpart, template: template),
             "messages": [["role": "user", "content": content]],
+            "output_config": ["effort": Self.reportingEffort],
         ]
 
         let data = try await performRequest(body: body, apiKey: apiKey)
@@ -629,6 +638,7 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
             "max_tokens": maxTokens,
             "system": system,
             "messages": [["role": "user", "content": user]],
+            "output_config": ["effort": Self.reportingEffort],
         ]
         let data = try await performRequest(body: body, apiKey: apiKey)
         let response = try JSONDecoder().decode(MessagesResponse.self, from: data)
@@ -835,8 +845,12 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         return drafts + [checkFirstDraft(kindKey: kind)]
     }
 
-    private static func parseResult(from data: Data) throws -> (insights: [InsightDraft], sentiment: [String: Int], read: String?, coach: String?, resolved: [String]) {
+    static func parseResult(from data: Data) throws -> (insights: [InsightDraft], sentiment: [String: Int], read: String?, coach: String?, resolved: [String]) {
         let response = try JSONDecoder().decode(MessagesResponse.self, from: data)
+        // Haiku 5.5 has no server-side refusal fallback. An empty result flows
+        // through addCheckFirstFallbackIfNeeded, which makes strict profiles
+        // visibly abstain instead of presenting an error as an answer.
+        if response.stopReason == "refusal" { return ([], [:], nil, nil, []) }
         // Truncated structured output is unparseable half-JSON; silently treating
         // it as "no insights" made whole windows vanish. Throw so the engine
         // re-arms the window and retries.

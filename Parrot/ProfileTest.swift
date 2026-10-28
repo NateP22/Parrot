@@ -24,6 +24,7 @@ enum ProfileTest {
         testMigration()
         testPresetRefresh()
         testPromptAndSchema()
+        testClaudeModelConfiguration()
         testGroundedAnswerGuard()
         testSnapshotPersistence()
         testLenientKBDecode()
@@ -2651,6 +2652,24 @@ enum ProfileTest {
         )
         check("general-knowledge profiles retain their existing answer path",
               general.first?.detail == wrongQuote.detail)
+    }
+
+    static func testClaudeModelConfiguration() {
+        typealias A = ClaudeAnalysisProvider
+        check("Claude API selects Haiku 5.5", A.model == "claude-haiku-5-5")
+        check("strict live analysis uses high effort", A.analysisEffort == "high")
+        let payload = Data(#"{"content":[],"stop_reason":"refusal"}"#.utf8)
+        let refused = try? A.parseResult(from: payload)
+        check("Haiku refusal returns no generated answer", refused?.insights.isEmpty == true)
+        let fallback = A.addCheckFirstFallbackIfNeeded(
+            refused?.insights ?? [], question: "Which settings do that?",
+            allowGeneralKnowledge: false,
+            kinds: [ProfileKind(id: UUID(), key: "suggestion", label: "Suggestion",
+                                colorHex: "000000", iconSystemName: "text.bubble",
+                                triggerDescription: "", isPinned: false, priority: 0)]
+        )
+        check("Haiku refusal becomes a visible check-first line",
+              fallback.first?.detail == A.checkFirstMessage)
     }
 
     static func testSnapshotPersistence() {
