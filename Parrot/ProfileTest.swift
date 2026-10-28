@@ -2605,6 +2605,23 @@ enum ProfileTest {
         check("unrelated exact source quote is withheld",
               irrelevant.first?.detail == A.checkFirstMessage)
 
+        let adjacentQuote = "Select the caption photo from the editor menu."
+        let adjacent = A.validatingGroundedAnswers(
+            [InsightDraft(kindKey: "answer", title: "Caption answer",
+                          detail: adjacentQuote, source: source, reply: adjacentQuote,
+                          evidenceQuote: adjacentQuote)],
+            references: [KBReference(documentName: source, note: nil, text: adjacentQuote)],
+            knownDocuments: [source], question: question, allowGeneralKnowledge: false
+        )
+        check("same-topic but incomplete source line is withheld",
+              adjacent.first?.detail == A.checkFirstMessage)
+
+        check("different-page qualifier must be present in evidence",
+              !A.hasSufficientQuestionCoverage(
+                question: "Can I move the movable quote to a different page?",
+                quote: "Move the quote anywhere around the page."
+              ))
+
         let longQuote = String(repeating: "caption ", count: 21) + "photo."
         let tooLong = InsightDraft(
             kindKey: "answer", title: "Long answer",

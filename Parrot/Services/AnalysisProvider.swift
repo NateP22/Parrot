@@ -742,8 +742,7 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                   }),
                   reference.text.range(of: quote) != nil,
                   let question,
-                  CallAnalysisEngine.significantTokens(question)
-                    .intersection(CallAnalysisEngine.significantTokens(quote)).count >= 2 else {
+                  hasSufficientQuestionCoverage(question: question, quote: quote) else {
                 return checkFirstDraft(kindKey: draft.kindKey)
             }
 
@@ -768,6 +767,51 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         guard let last = trimmed.last, ".!?".contains(last) else { return false }
         let body = trimmed.dropLast()
         return !body.contains(where: { ".!?".contains($0) })
+    }
+
+    /// Avoid accepting an exact but merely adjacent source sentence. At least
+    /// half of the question's content terms must appear (allowing simple
+    /// inflections), and scope/contrast terms must also be represented.
+    static func hasSufficientQuestionCoverage(question: String, quote: String) -> Bool {
+        let questionTokens = CallAnalysisEngine.significantTokens(question)
+        let quoteTokens = CallAnalysisEngine.significantTokens(quote)
+        guard !questionTokens.isEmpty else { return false }
+
+        let matched = questionTokens.filter { questionToken in
+            quoteTokens.contains { quoteToken in
+                let prefixLength = min(4, min(questionToken.count, quoteToken.count))
+                return prefixLength >= 4
+                    && questionToken.prefix(prefixLength) == quoteToken.prefix(prefixLength)
+            }
+        }.count
+        guard matched >= 2,
+              Double(matched) / Double(questionTokens.count) >= 0.5 else { return false }
+
+        let questionWords = normalizedWords(question)
+        let quoteWords = normalizedWords(quote)
+        let scopeGroups: [Set<String>] = [
+            ["another", "different", "other", "between", "across", "cross", "separate"],
+            ["all", "every", "each"],
+            ["only", "just"],
+            ["no", "not", "never", "without", "cannot", "willnot", "doesnot", "donot", "isnot", "shouldnot", "wouldnot"],
+        ]
+        for group in scopeGroups where !group.isDisjoint(with: questionWords) {
+            guard !group.isDisjoint(with: quoteWords) else { return false }
+        }
+        return true
+    }
+
+    private static func normalizedWords(_ text: String) -> Set<String> {
+        let normalized = text.lowercased()
+            .replacingOccurrences(of: "can't", with: "cannot")
+            .replacingOccurrences(of: "won't", with: "willnot")
+            .replacingOccurrences(of: "doesn't", with: "doesnot")
+            .replacingOccurrences(of: "don't", with: "donot")
+            .replacingOccurrences(of: "isn't", with: "isnot")
+            .replacingOccurrences(of: "shouldn't", with: "shouldnot")
+            .replacingOccurrences(of: "wouldn't", with: "wouldnot")
+        return Set(normalized.components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty })
     }
 
     private static func checkFirstDraft(kindKey: String) -> InsightDraft {
