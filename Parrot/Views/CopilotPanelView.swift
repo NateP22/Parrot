@@ -178,9 +178,11 @@ struct CopilotPanelView: View {
             // Always-on live summary: call score + one-line coach verdict +
             // sentiment chips + open-blocker count. THE glanceable answer to
             // "how is it going and what should I do".
-            coachCard
-                .padding(.horizontal, Theme.Metrics.pad)
-                .padding(.top, 12)
+            if engine.coachLine != nil || engine.callScore != nil || !engine.sentiment.isEmpty {
+                coachCard
+                    .padding(.horizontal, Theme.Metrics.pad)
+                    .padding(.top, 12)
+            }
 
             // What the copilot is working with: open before the first insight,
             // then a one-line row so the feed keeps the stage.
@@ -692,7 +694,7 @@ struct InsightCard: View {
                 if insight.kindKey == "suggestion" {
                     Button {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(insight.detail, forType: .string)
+                        NSPasteboard.general.setString(insight.reply ?? insight.detail, forType: .string)
                         copied = true
                         Task {
                             try? await Task.sleep(for: .seconds(1.5))

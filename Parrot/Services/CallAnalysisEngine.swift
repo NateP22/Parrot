@@ -406,11 +406,15 @@ final class CallAnalysisEngine {
         var references: [KBReference] = []
         if let kb = knowledgeBase {
             if let question = currentQuestion {
-                references = await kb.search(query: question, profileID: profile?.id, topK: 2)
+                let strict = profile?.allowGeneralKnowledge == false
+                references = await kb.search(query: question, profileID: profile?.id,
+                    topK: strict ? 12 : 2, contextNeighbors: strict ? 1 : 0)
             }
             let windowQuery = recent.map(\.text).joined(separator: " ")
             for reference in await kb.search(query: windowQuery, profileID: profile?.id)
-            where !references.contains(where: { $0.text == reference.text }) {
+            where !references.contains(where: {
+                $0.documentName == reference.documentName && $0.text.contains(reference.text)
+            }) {
                 references.append(reference)
             }
         }
@@ -441,6 +445,14 @@ final class CallAnalysisEngine {
             forceLocal: forceLocal
         )
 
+        if currentQuestion != nil && !request.allowGeneralKnowledge {
+            // A prior small-talk verdict must not tell the user to wait for a
+            // question while the document answer is already being checked.
+            coachLine = nil
+            sentimentRead = nil
+            sentiment = [:]
+        }
+
         do {
             let result = try await provider.analyze(request)
             guard isActive, !Task.isCancelled else {
@@ -453,12 +465,13 @@ final class CallAnalysisEngine {
             clearPendingExcerpts()
             // Merge model sentiment; overlay the computed talk-balance gauge if present.
             var merged = result.sentiment
-            if let pct = userTalkPercent, (profile?.gauges.contains { $0.key == "my_dominance" } ?? false) {
+            if request.currentQuestion == nil || request.allowGeneralKnowledge,
+               let pct = userTalkPercent, (profile?.gauges.contains { $0.key == "my_dominance" } ?? false) {
                 merged["my_dominance"] = pct
             }
             sentiment = merged
             sentimentRead = result.read
-            if let coach = result.coach { coachLine = coach }
+            coachLine = result.coach
             // The model says these already-shown items were since dealt with in
             // the conversation — clear them so stale alerts don't pile up (and
             // so the post-call report shows them Handled, not Unresolved).

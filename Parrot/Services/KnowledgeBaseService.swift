@@ -246,7 +246,8 @@ final class KnowledgeBaseService {
     /// Returns the best-matching chunks for the recent conversation, joined with
     /// each document's current note. Pass `profileID` to restrict to documents
     /// tagged into that profile; `nil` searches all (back-compat).
-    func search(query: String, profileID: UUID? = nil, topK: Int = 4) async -> [KBReference] {
+    func search(query: String, profileID: UUID? = nil, topK: Int = 4,
+                contextNeighbors: Int = 0) async -> [KBReference] {
         guard !chunks.isEmpty, !query.isEmpty else { return [] }
 
         // Only documents this call type may use (nil = every document not off).
@@ -301,8 +302,21 @@ final class KnowledgeBaseService {
 
         return best.map { chunk in
             let note = notesByDocument[chunk.documentName]?.nilIfEmpty
-            return KBReference(documentName: chunk.documentName, note: note, text: chunk.text)
+            return KBReference(documentName: chunk.documentName, note: note,
+                text: Self.contextText(for: chunk, in: snapshot, neighbors: contextNeighbors))
         }
+    }
+
+    /// Keep adjacent instructions/conditions with a retrieved excerpt. The
+    /// caller supplies only allowed chunks; never cross a document boundary or
+    /// cut a source block to satisfy a character cap. Default search is unchanged.
+    nonisolated static func contextText(for chunk: KBChunk, in allowed: [KBChunk], neighbors: Int) -> String {
+        let radius = min(2, max(0, neighbors))
+        let document = allowed.filter { $0.documentName == chunk.documentName }
+        guard let index = document.firstIndex(where: { $0.id == chunk.id }) else { return "" }
+        guard radius > 0 else { return chunk.text }
+        let first = max(0, index - radius), last = min(document.count - 1, index + radius)
+        return document[first...last].map(\.text).joined(separator: "\n\n")
     }
 
     // MARK: - Lexical retrieval (BM25 + rank fusion)
