@@ -395,9 +395,10 @@ final class CallAnalysisEngine {
         // small talk buried the pricing chunk in the 2026-09-19 live run), the
         // recent window fills the rest.
         let recent = segments.suffix(8)
+        let currentQuestion = Self.latestQuestion(in: recent.map { ($0.text, $0.source) })
         var references: [KBReference] = []
         if let kb = knowledgeBase {
-            if let question = Self.latestQuestion(in: recent.map { ($0.text, $0.source) }) {
+            if let question = currentQuestion {
                 references = await kb.search(query: question, profileID: profile?.id, topK: 2)
             }
             let windowQuery = recent.map(\.text).joined(separator: " ")
@@ -416,6 +417,7 @@ final class CallAnalysisEngine {
 
         let request = AnalysisRequest(
             transcript: transcript,
+            currentQuestion: currentQuestion,
             knownInsightTitles: Array(knownTitles),
             references: references,
             instructions: profile?.tone ?? "",
@@ -877,7 +879,7 @@ final class CallAnalysisEngine {
 
     /// The newest thing the other side asked in a window, if anything.
     nonisolated static func latestQuestion(in window: [(text: String, source: AudioSource)]) -> String? {
-        window.last { $0.source == .them && looksLikeQuestion($0.text) }?.text
+        window.last { $0.source == .them && isSubstantiveQuestion($0.text) }?.text
     }
 
     /// Cheap detector that fast-tracks analysis when someone asks something.
@@ -891,7 +893,7 @@ final class CallAnalysisEngine {
             "do you", "would you", "will you", "did you", "are you", "have you",
             "is there", "are there", "is it", "does it", "will it",
             "when can", "when do", "when will", "where do", "who is", "who's",
-            "why ", "tell me about",
+            "why ", "which ", "tell me about",
         ]
         return openers.contains { lowered.contains($0) }
     }

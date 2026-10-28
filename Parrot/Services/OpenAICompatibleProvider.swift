@@ -192,8 +192,21 @@ final class OpenAICompatibleProvider: AnalysisProvider {
         let parsed = try ClaudeAnalysisProvider.parseAnalysisPayload(text)
         let sourceValidated = ClaudeAnalysisProvider.validatingSources(
             parsed.insights, knownDocuments: request.knownDocumentNames)
+        let grounded = ClaudeAnalysisProvider.validatingGroundedAnswers(
+            sourceValidated,
+            references: request.references,
+            knownDocuments: request.knownDocumentNames,
+            question: request.currentQuestion,
+            allowGeneralKnowledge: request.allowGeneralKnowledge
+        )
+        let answered = ClaudeAnalysisProvider.addCheckFirstFallbackIfNeeded(
+            grounded,
+            question: request.currentQuestion,
+            allowGeneralKnowledge: request.allowGeneralKnowledge,
+            kinds: request.kinds
+        )
         let kindValidated = ClaudeAnalysisProvider.validatingKinds(
-            sourceValidated, allowed: Set(request.kinds.map(\.key)))
+            answered, allowed: Set(request.kinds.map(\.key)))
         return AnalysisResult(insights: kindValidated, sentiment: parsed.sentiment,
                               read: parsed.read, coach: parsed.coach, resolved: parsed.resolved)
     }

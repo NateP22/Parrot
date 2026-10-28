@@ -17,11 +17,15 @@ struct InsightDraft {
     /// overlaps with (same underlying issue, any wording, any kind), or nil/""
     /// when genuinely new. Non-empty means the engine discards the draft.
     var supersedes: String? = nil
+    /// Exact supporting words copied from one of the retrieved KB passages.
+    var evidenceQuote: String? = nil
 }
 
 /// Everything a provider needs for one analysis pass.
 struct AnalysisRequest {
     let transcript: String
+    /// Newest substantive question asked by the other side, if any.
+    var currentQuestion: String? = nil
     let knownInsightTitles: [String]
     /// Best-matching knowledge base chunks for the recent conversation.
     let references: [KBReference]
@@ -193,6 +197,11 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         it to exactly the name of a provided document, or the literal "general knowledge" (only \
         when allowed), otherwise OMIT it. Never describe the conversation in it.
 
+        For a strict document-only answer, include "evidence_quote": one short, exact \
+        sentence copied from the cited reference. Keep it under 20 words. The user sees \
+        that source sentence as the answer, not a paraphrase. If no complete sentence in \
+        the retrieved passage directly supports the answer, the application will abstain.
+
         EVERY insight that flags an unresolved item (a concern, an unanswered question, \
         an obstacle) MUST set "reply": one short, concrete line the user could say right now \
         to address it — grounded in the reference material when it covers the topic, otherwise \
@@ -252,6 +261,7 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                 "title": ["type": "string"],
                 "detail": ["type": "string"],
                 "source": ["type": "string", "description": "Exact KB document name, or 'general knowledge'. Omit otherwise."],
+                "evidence_quote": ["type": "string", "description": "Exact, contiguous sentence copied from the cited KB passage, under 20 words. Empty when no passage supports the answer."],
                 "reply": ["type": "string", "description": "For unresolved flags: one short line the user could say to address it. Empty string for kinds that don't need one."],
                 "supersedes": ["type": "string", "description": "EXACT title from the already-shown list that this insight overlaps with — same underlying issue in any wording or under any kind. Such insights are discarded, so prefer not emitting them. Empty string only when genuinely new."],
             ],
@@ -259,7 +269,7 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
             // fields get sporadic compliance, which showed up as answers on some
             // orange cards and not others. supersedes doubles as a forced
             // check against the already-shown list before each emission.
-            "required": ["kind", "title", "detail", "reply", "supersedes"],
+            "required": ["kind", "title", "detail", "reply", "supersedes", "evidence_quote"],
             "additionalProperties": false,
         ]
         var properties: [String: Any] = ["insights": ["type": "array", "items": itemSchema]]
@@ -351,6 +361,24 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
             sections.append("Reference material from the user's knowledge base:\n\(formatted)")
         }
 
+        if let question = request.currentQuestion, !question.isEmpty {
+            sections.append("""
+            Latest client question:
+            <latest_question>\(question)</latest_question>
+            """)
+        }
+
+        if let question = request.currentQuestion, !question.isEmpty,
+           !request.allowGeneralKnowledge {
+            sections.append("""
+            Strict answer rule: answer this question only with one complete sentence of 20 words \
+            or fewer copied exactly from a retrieved reference. Set evidence_quote and reply \
+            to that same text and source to the exact document name. Do not paraphrase, combine \
+            distant text or drop a required condition. If no short, directly relevant sentence \
+            is available, return no answer card; the application will show a fixed check-first message.
+            """)
+        }
+
         sections.append(request.allowGeneralKnowledge
             ? "If the reference material doesn't cover a question, you may answer from "
               + "general knowledge — set \"source\" to \"general knowledge\" so the user "
@@ -390,7 +418,20 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         let data = try await performRequest(body: body, apiKey: apiKey)
         let parsed = try Self.parseResult(from: data)
         let sourceValidated = Self.validatingSources(parsed.insights, knownDocuments: request.knownDocumentNames)
-        let kindValidated = Self.validatingKinds(sourceValidated, allowed: Set(request.kinds.map(\.key)))
+        let grounded = Self.validatingGroundedAnswers(
+            sourceValidated,
+            references: request.references,
+            knownDocuments: request.knownDocumentNames,
+            question: request.currentQuestion,
+            allowGeneralKnowledge: request.allowGeneralKnowledge
+        )
+        let answered = Self.addCheckFirstFallbackIfNeeded(
+            grounded,
+            question: request.currentQuestion,
+            allowGeneralKnowledge: request.allowGeneralKnowledge,
+            kinds: request.kinds
+        )
+        let kindValidated = Self.validatingKinds(answered, allowed: Set(request.kinds.map(\.key)))
         return AnalysisResult(insights: kindValidated, sentiment: parsed.sentiment,
                               read: parsed.read, coach: parsed.coach, resolved: parsed.resolved)
     }
@@ -667,8 +708,87 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                 return draft
             }
             return InsightDraft(kindKey: draft.kindKey, title: draft.title, detail: draft.detail,
-                                source: nil, reply: draft.reply)
+                                source: nil, reply: draft.reply, supersedes: draft.supersedes,
+                                evidenceQuote: draft.evidenceQuote)
         }
+    }
+
+    static let checkFirstMessage = "I need to check that before I confirm."
+    private static let directAnswerKinds: Set<String> = ["suggestion", "answer"]
+
+    /// A strict document-only profile shows a short, verbatim source line in
+    /// place of generated answer prose. A document name alone never passes.
+    static func validatingGroundedAnswers(
+        _ drafts: [InsightDraft],
+        references: [KBReference],
+        knownDocuments: [String],
+        question: String?,
+        allowGeneralKnowledge: Bool
+    ) -> [InsightDraft] {
+        drafts.map { draft in
+            guard !allowGeneralKnowledge,
+                  question != nil,
+                  directAnswerKinds.contains(draft.kindKey) || draft.reply != nil || draft.source != nil else { return draft }
+
+            guard let source = draft.source,
+                  source.lowercased() != "general knowledge",
+                  Set(knownDocuments.map { $0.lowercased() }).contains(source.lowercased()),
+                  let quote = draft.evidenceQuote?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !quote.isEmpty,
+                  quoteWordCount(quote) <= 20,
+                  isSingleSentenceQuote(quote),
+                  let reference = references.first(where: {
+                      $0.documentName.caseInsensitiveCompare(source) == .orderedSame
+                  }),
+                  reference.text.range(of: quote) != nil,
+                  let question,
+                  CallAnalysisEngine.significantTokens(question)
+                    .intersection(CallAnalysisEngine.significantTokens(quote)).count >= 2 else {
+                return checkFirstDraft(kindKey: draft.kindKey)
+            }
+
+            return InsightDraft(
+                kindKey: draft.kindKey,
+                title: "From your docs",
+                detail: quote,
+                source: source,
+                reply: quote,
+                supersedes: draft.supersedes,
+                evidenceQuote: quote
+            )
+        }
+    }
+
+    static func quoteWordCount(_ text: String) -> Int {
+        text.split { !$0.isLetter && !$0.isNumber }.count
+    }
+
+    static func isSingleSentenceQuote(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let last = trimmed.last, ".!?".contains(last) else { return false }
+        let body = trimmed.dropLast()
+        return !body.contains(where: { ".!?".contains($0) })
+    }
+
+    private static func checkFirstDraft(kindKey: String) -> InsightDraft {
+        InsightDraft(kindKey: kindKey, title: "Check first", detail: checkFirstMessage,
+                     source: nil, reply: nil, evidenceQuote: nil)
+    }
+
+    static func addCheckFirstFallbackIfNeeded(
+        _ drafts: [InsightDraft],
+        question: String?,
+        allowGeneralKnowledge: Bool,
+        kinds: [ProfileKind]
+    ) -> [InsightDraft] {
+        guard !allowGeneralKnowledge, question != nil else { return drafts }
+        if drafts.contains(where: { $0.detail == checkFirstMessage }) { return drafts }
+        if drafts.contains(where: {
+            directAnswerKinds.contains($0.kindKey) && $0.source != nil
+        }) { return drafts }
+        guard let kind = kinds.first(where: { directAnswerKinds.contains($0.key) })?.key
+                ?? kinds.first?.key else { return drafts }
+        return drafts + [checkFirstDraft(kindKey: kind)]
     }
 
     private static func parseResult(from data: Data) throws -> (insights: [InsightDraft], sentiment: [String: Int], read: String?, coach: String?, resolved: [String]) {
@@ -701,7 +821,8 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
             return InsightDraft(kindKey: kind, title: title, detail: detail,
                                 source: (item["source"] as? String)?.nilIfEmpty,
                                 reply: (item["reply"] as? String)?.nilIfEmpty,
-                                supersedes: (item["supersedes"] as? String)?.nilIfEmpty)
+                                supersedes: (item["supersedes"] as? String)?.nilIfEmpty,
+                                evidenceQuote: (item["evidence_quote"] as? String)?.nilIfEmpty)
         }
         // A gauge left out or null ("can't tell yet") stays out; a real 0 stays in.
         var sentiment: [String: Int] = [:]

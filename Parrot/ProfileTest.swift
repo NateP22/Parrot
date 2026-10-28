@@ -24,6 +24,7 @@ enum ProfileTest {
         testMigration()
         testPresetRefresh()
         testPromptAndSchema()
+        testGroundedAnswerGuard()
         testSnapshotPersistence()
         testLenientKBDecode()
         testStableHash()
@@ -2541,6 +2542,9 @@ enum ProfileTest {
         let kindEnum = ((items?["properties"] as? [String: Any])?["kind"] as? [String: Any])?["enum"] as? [String]
         check("schema enum == profile keys", Set(kindEnum ?? []) == Set(kinds.map(\.key)))
         check("schema has sentiment object", (schema["properties"] as? [String: Any])?["sentiment"] != nil)
+        let schemaItem = ((schema["properties"] as? [String: Any])?["insights"] as? [String: Any])?["items"] as? [String: Any]
+        check("schema requires exact evidence quote",
+              ((schemaItem?["required"] as? [String]) ?? []).contains("evidence_quote"))
         // Injection hardening: transcript/document text is declared data-only.
         check("prompt declares tagged text as data", prompt.contains("<transcript>"))
         let valid = ClaudeAnalysisProvider.validatingKinds(
@@ -2548,6 +2552,88 @@ enum ProfileTest {
              InsightDraft(kindKey: "objection", title: "t", detail: "d", source: nil)],
             allowed: Set(kinds.map(\.key)))
         check("validatingKinds drops out-of-lens", valid.count == 1 && valid.first?.kindKey == "reflection")
+    }
+
+    static func testGroundedAnswerGuard() {
+        typealias A = ClaudeAnalysisProvider
+        let question = "Which settings put the caption beside the photo and credit below the caption?"
+        let source = "Paginator Help.md"
+        let quote = "For captions beside photos, choose Beside image and enable Credit Below Caption."
+        let reference = KBReference(documentName: source, note: nil, text: quote)
+        let generated = InsightDraft(
+            kindKey: "suggestion",
+            title: "The customer needs caption help",
+            detail: "The style controls set this for every photo.",
+            source: source,
+            reply: "Choose the credit style below.",
+            evidenceQuote: quote
+        )
+        let accepted = A.validatingGroundedAnswers(
+            [generated], references: [reference], knownDocuments: [source],
+            question: question, allowGeneralKnowledge: false
+        )
+        check("strict answer shows the exact short source line",
+              accepted.first?.detail == quote && accepted.first?.reply == quote)
+        check("strict answer drops generated title and wording",
+              accepted.first?.title == "From your docs" && accepted.first?.detail != generated.detail)
+        check("strict answer retains its matching source",
+              accepted.first?.source == source)
+
+        let wrongQuote = InsightDraft(
+            kindKey: "suggestion", title: "Wrong claim",
+            detail: "Re-import to fix it.", source: source,
+            reply: "Re-import to fix it.", evidenceQuote: "This text is not in the source."
+        )
+        let rejected = A.validatingGroundedAnswers(
+            [wrongQuote], references: [reference], knownDocuments: [source],
+            question: question, allowGeneralKnowledge: false
+        )
+        check("unsupported quote becomes fixed check-first text",
+              rejected.first?.detail == A.checkFirstMessage && rejected.first?.source == nil)
+
+        let unrelatedQuote = "Set the export screen to HTML to preserve formatting."
+        let unrelated = InsightDraft(
+            kindKey: "answer", title: "Caption fix",
+            detail: unrelatedQuote, source: source, reply: unrelatedQuote,
+            evidenceQuote: unrelatedQuote
+        )
+        let irrelevant = A.validatingGroundedAnswers(
+            [unrelated], references: [KBReference(documentName: source, note: nil,
+                                                  text: unrelatedQuote + "\n" + quote)],
+            knownDocuments: [source], question: question, allowGeneralKnowledge: false
+        )
+        check("unrelated exact source quote is withheld",
+              irrelevant.first?.detail == A.checkFirstMessage)
+
+        let longQuote = String(repeating: "caption ", count: 21) + "photo."
+        let tooLong = InsightDraft(
+            kindKey: "answer", title: "Long answer",
+            detail: longQuote, source: source, reply: longQuote,
+            evidenceQuote: longQuote
+        )
+        let overLimit = A.validatingGroundedAnswers(
+            [tooLong], references: [KBReference(documentName: source, note: nil,
+                                                text: longQuote)],
+            knownDocuments: [source], question: question, allowGeneralKnowledge: false
+        )
+        check("overlong source sentence is withheld rather than truncated",
+              overLimit.first?.detail == A.checkFirstMessage)
+
+        let noAnswer = A.addCheckFirstFallbackIfNeeded(
+            [], question: question, allowGeneralKnowledge: false,
+            kinds: [ProfileKind(id: UUID(), key: "suggestion", label: "Suggestion",
+                                colorHex: "000000", iconSystemName: "text.bubble",
+                                triggerDescription: "", isPinned: false, priority: 0)]
+        )
+        check("strict unanswered question gets a visible abstention",
+              noAnswer.first?.detail == A.checkFirstMessage)
+
+        let general = A.validatingGroundedAnswers(
+            [wrongQuote], references: [], knownDocuments: [],
+            question: question, allowGeneralKnowledge: true
+        )
+        check("general-knowledge profiles retain their existing answer path",
+              general.first?.detail == wrongQuote.detail)
     }
 
     static func testSnapshotPersistence() {
@@ -2687,6 +2773,10 @@ enum ProfileTest {
         check("one-word question is not substantive", !E.isSubstantiveQuestion("Really?"))
         check("short follow-up with one content word is not substantive", !E.isSubstantiveQuestion("Is it extra?"))
         check("real question is substantive", E.isSubstantiveQuestion("How much is the express verification?"))
+        check("ASR question without punctuation is substantive", E.isSubstantiveQuestion("Which settings put the caption beside the photo"))
+        check("latest ASR question without punctuation is retained",
+              E.latestQuestion(in: [("Which settings put the caption beside the photo", .them)])
+                == "Which settings put the caption beside the photo")
         check("statement is not a question at all", !E.isSubstantiveQuestion("We take cards and bank transfers."))
         // Item 1: Jev same-issue verdicts laid out draft-major; a draft is dropped
         // when any open card scores at or above the threshold.

@@ -417,17 +417,26 @@ struct PinnedBlockerRow: View {
                 HStack(alignment: .top, spacing: 6) {
                     TimestampButton(insight: insight, action: onJump)
 
-                    Text(insight.detail)
+                    Text(insight.reply ?? insight.detail)
                         .font(Theme.Typography.secondary)
                         .foregroundStyle(Theme.Colors.ink2)
                         .lineLimit(expanded ? nil : 2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
-                // The answer is the valuable part — always visible, no click.
-                if let reply = insight.reply {
-                    SuggestedReplyBox(reply: reply)
-                        .padding(.top, 2)
+                if let reply = insight.reply, reply != insight.detail {
+                    if expanded {
+                        Text(insight.detail)
+                            .font(Theme.Typography.secondary)
+                            .foregroundStyle(Theme.Colors.ink3)
+                    } else {
+                        Button("Details") {
+                            withAnimation(.easeOut(duration: 0.15)) { expanded = true }
+                        }
+                        .buttonStyle(.plain)
+                        .font(Theme.Typography.sans(11, .medium))
+                        .foregroundStyle(Theme.Colors.accent)
+                    }
                 }
 
                 // ponytail: length heuristic for "is it truncated" — measuring
@@ -477,6 +486,7 @@ struct HeroInsightCard: View {
     @State private var copied = false
     /// Excerpt cards carry a whole document chunk; clamp it until tapped.
     @State private var showsWholeExcerpt = false
+    @State private var showsDetails = false
 
     private var isExcerpt: Bool { insight.kindKey == Insight.docExcerptKind }
 
@@ -519,7 +529,7 @@ struct HeroInsightCard: View {
                 .foregroundStyle(Theme.Colors.ink)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text(insight.detail)
+            Text(insight.reply ?? insight.detail)
                 .font(Theme.Typography.heroDetail)
                 .foregroundStyle(Theme.Colors.ink)
                 .textSelection(.enabled)
@@ -535,15 +545,26 @@ struct HeroInsightCard: View {
                 .foregroundStyle(Theme.Colors.accent)
             }
 
-            if let reply = insight.reply {
-                SuggestedReplyBox(reply: reply)
+            if let reply = insight.reply, reply != insight.detail {
+                if showsDetails {
+                    Text(insight.detail)
+                        .font(Theme.Typography.secondary)
+                        .foregroundStyle(Theme.Colors.ink2)
+                        .textSelection(.enabled)
+                }
+                Button(showsDetails ? "Hide details" : "Details") {
+                    withAnimation(.easeOut(duration: 0.15)) { showsDetails.toggle() }
+                }
+                .buttonStyle(.plain)
+                .font(Theme.Typography.sans(11, .medium))
+                .foregroundStyle(Theme.Colors.accent)
             }
 
             HStack(spacing: 8) {
                 if isSayable {
                     Button {
                         NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(insight.detail, forType: .string)
+                        NSPasteboard.general.setString(insight.reply ?? insight.detail, forType: .string)
                         copied = true
                         Task {
                             try? await Task.sleep(for: .seconds(1.5))
