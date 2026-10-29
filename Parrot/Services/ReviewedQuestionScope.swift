@@ -124,7 +124,8 @@ struct ReviewedQuestionScope: Codable, Equatable {
                 && !phrase.contains("\n") && !normalized.isEmpty && phrase.count <= 120
                 && normalized.split(separator: " ").count <= 8
         }
-        guard requiredPhrases.allSatisfy({ (1...8).contains($0.count) && $0.allSatisfy(validPhrase) }),
+        // Reviewed synonyms expand one topic; AND groups and phrase bounds stay fixed.
+        guard requiredPhrases.allSatisfy({ (1...16).contains($0.count) && $0.allSatisfy(validPhrase) }),
               forbiddenPhrases.allSatisfy(validPhrase) else { return false }
         let required = requiredPhrases.flatMap { $0 }.map(Self.normalize)
         let forbidden = forbiddenPhrases.map(Self.normalize)

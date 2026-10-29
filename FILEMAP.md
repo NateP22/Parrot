@@ -12,6 +12,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ProfileTest.swift` | 6565 | --profile-test: grounding, imported-text fingerprints, signed-catalog boundary checks, source/report and urgent-question guards |
 | `Parrot/ProfileTest+ReviewedAnswers.swift` | 97 | Signed synthetic fixtures for catalog authenticity, exact text/hash/version, scope, malformed data and short-reply boundaries |
 | `Parrot/ProfileTest+ReviewedScope.swift` | 100 | Signed synthetic v2 authority/scope/form, forced wrong-ID, ambiguity, metadata-tamper and v1 persistence boundaries |
+| `Parrot/ProfileTest+ReviewedScopeAliases.swift` | 90 | Signed synthetic alias bounds, actual catalog admission, compound partial-answer rejection and off-source topic preservation |
 | `Parrot/ProfileTest+ProfilePolicy.swift` | 240 | Gated actual-engine delivery tests: a live profile becoming strict discards stale general answers and requeues its question; unrelated profile edit control |
 | `Parrot/ProfileTest+ReviewedTransport.swift` | 246 | Actual Claude/provider switcher/KB store; synthetic HTTP, privacy/local routing, ambient guards and isolated persistent restart/scope checks |
 | `Parrot/ProfileTest+Parakeet.swift` | 190 | `--profile-test` checks for Parakeet: language router, per-side probe, recommendation, rewind, imports |
