@@ -26,9 +26,16 @@ struct KnowledgeSettingsView: View {
         SettingsPage {
             SettingsCard(
                 title: "Documents",
-                blurb: "The Assistant grounds its answers in these and cites the source. Indexed on this Mac, never uploaded."
+                blurb: "Stored on this Mac. Relevant passages or reviewed replies are shared with your chosen AI when cloud analysis is on."
             ) {
                 SettingsRow(first: true) { toolbar }
+                if let reviewedStatus = kb.reviewedAnswerStatus {
+                    SettingsRow {
+                        Text(reviewedStatus)
+                            .font(Theme.Typography.secondary)
+                            .foregroundStyle(Theme.Colors.ink3)
+                    }
+                }
                 if kb.isIndexing || kb.lastError != nil {
                     SettingsRow { status }
                 }
@@ -53,7 +60,7 @@ struct KnowledgeSettingsView: View {
         }
         .fileImporter(
             isPresented: $importing,
-            allowedContentTypes: [.pdf, .plainText, .text],
+            allowedContentTypes: [.pdf, .plainText, .text, .json],
             allowsMultipleSelection: true
         ) { result in
             if case .success(let urls) = result {

@@ -9,7 +9,9 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 |---|---|---|
 | `Parrot/StartupQueryHarness.swift` | 125 | `--query-startup-test`: no-audio, in-memory SwiftData query insert/save/view-transition diagnostic; never opens the user store or credentials |
 | `Parrot/ParrotApp.swift` | 290 | `@main`; parses CLI harness flags before the SwiftUI `App` starts |
-| `Parrot/ProfileTest.swift` | 6514 | `--profile-test`: headless logic harness; strict answer provenance, reviewer failures, report receipts, neighboring-source and urgent-question cancellation checks |
+| `Parrot/ProfileTest.swift` | 6565 | --profile-test: grounding, imported-text fingerprints, signed-catalog boundary checks, source/report and urgent-question guards |
+| `Parrot/ProfileTest+ReviewedAnswers.swift` | 97 | Signed synthetic fixtures for catalog authenticity, exact text/hash/version, scope, malformed data and short-reply boundaries |
+| `Parrot/ProfileTest+ReviewedTransport.swift` | 246 | Actual Claude/provider switcher/KB store; synthetic HTTP, privacy/local routing, ambient guards and isolated persistent restart/scope checks |
 | `Parrot/ProfileTest+Parakeet.swift` | 190 | `--profile-test` checks for Parakeet: language router, per-side probe, recommendation, rewind, imports |
 | `Parrot/SnapshotTool.swift` | 1827 | Offscreen PNG renderers + transcribe/analyze/capture harnesses; `--language-test <audio> [model] [seconds]` runs the live language check on a saved track; `--echo-replay` scores a recorded call's Me lines with the echo gate; `--aec-replay <aec-mic> <aec-ref>` reruns the echo canceller on a `PARROT_AEC_DUMP=1` recording with shifted pairings and other filter tails; `--liveloop-test` takes `LIVELOOP_MIC` to feed both tracks (Deepgram: signed dist binary + `-transcriptionBackend deepgram`); `ANALYZE_REPORT=all --analyze-test ollama <model>` writes every built-in report on a model and checks the sections came back; `--store-upgrade-test <file>` upgrades an older store copy (read-only like MCP, then with the Profiles 2.0 migration); `--ask-chat-test, --ask-real` runs a real multi-turn Ask Parrot chat against Claude or Ollama; `--about-test <store> <id> [provider] [model]` merges a meeting's same-named speakers and writes its title + About on a scratch copy |
 | `Parrot/CopilotHarness.swift` | 360 | `--kb-add`, `--doc-answer-eval` (Jev precision/recall), `--copilot-replay` (question-to-card latency; `--real` sends passes to real Claude Haiku and prints each card's call time) |
@@ -27,7 +29,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Models/Insight.swift` | 65 | `CallInsight` (stored) and `Insight` (live value) |
 | `Models/CallProfile.swift` | 180 | Per-call-type prompt config: kinds, sentiment gauges; report choice (classic / preset / custom), sharing ids, last 5 saved versions |
 | `Models/KindStyle.swift` | 86 | Maps insight kinds to icon/color; `Color` helpers |
-| `Models/KnowledgeBase.swift` | 151 | KB document/chunk/reference value types; `KBScope` (Use for: all / only / off), `KBFolder`, upgrade from tags |
+| `Models/KnowledgeBase.swift` | 167 | KB document/chunk/reference values, optional imported-text SHA-256 provenance; KBScope and folders with backward-compatible decoding |
 | `Models/AIUsage.swift` | 144 | Token accounting and per-model price table |
 | `Models/SpeakerProfile.swift` | 30 | Remembered voice: name + running-mean embedding (opt-in, local) |
 | `Models/SpeakerNameOptions.swift` | 94 | Pure: the names the naming popover offers (names in this call to join, every invitee, past names), each person once, filter, same-name key, two same-named invitees saved apart ("John (jpark)") |
@@ -53,11 +55,13 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/EngineRecommendation.swift` | 25 | The model a new install starts on: Parakeet only when every Mac language and past call fits its 25 |
 | `Services/CloudTranscription.swift` | 452 | Opt-in Groq (batch) and Deepgram (streaming; finals carry the words' spoken span) backends + WAV encode; `TranscriptPolisher`: the post-call Groq re-decode, which skips Me lines the echo gate calls echo |
 | `Services/DiarizationEngine.swift` | 156 | FluidAudio pyannote diarization (CoreML): labels + per-speaker embeddings; whole file or a live 60 s tail |
-| `Services/AnalysisProvider.swift` | 1389 | Claude Haiku 5.5; short strict answers mapped to original passage IDs, required support/conditions/clarity review, attributed AI report receipts; provider protocol, prompts, Keychain helpers |
-| `Services/OpenAICompatibleProvider.swift` | 528 | OpenAI-shaped LLM client (incl. Ollama); provider switching |
-| `Services/CallAnalysisEngine.swift` | 960 | Drives live Copilot passes; strict questions replace obsolete ambient work, with cancellation guards across retrieval; source retrieval and stale-coaching clearing; per-pace question floor; Jev excerpt fast path; mid-call On/Off |
+| `Services/AnalysisProvider.swift` | 1501 | Claude Haiku 5.5; signed whole-reply ID selection, strict source/reviewer guards, original evidence and report receipts |
+| `Services/OpenAICompatibleProvider.swift` | 686 | OpenAI-shaped backends/factory; reviewed-library fail-closed fallback and original reviewed reply/evidence preservation |
+| `Services/CallAnalysisEngine.swift` | 978 | Live Copilot; retrieval, cancellation/dedup, current reviewed-library scope revalidation before inserting a card |
 | `Services/JevDocMatcher.swift` | 175 | TypeSafe "Jev" client: one probability per KB chunk that it answers the question; same-issue verdicts for card dedup |
-| `Services/KnowledgeBaseService.swift` | 675 | Ingests/chunks KB docs; multilingual embeddings, hybrid BM25 retrieval and optional complete neighboring blocks within allowed documents; folders/Use for, `isInPlay`, index v2 upgrade + backup |
+| `Services/ReviewedAnswerCatalog.swift` | 301 | Authenticated complete reply library; pinned signature, source/unit identity, exact UTF-8 evidence, version and live document-scope checks |
+| `Services/ReviewedAnswerStore.swift` | 66 | Durable reviewed-mode intent, signed-library validation, backup and atomic install/readback; missing or invalid libraries remain required on reopen |
+| `Services/KnowledgeBaseService.swift` | 774 | Local KB imports, text fingerprints, signed answer-library import/backup/readback, source-scope admission, hybrid retrieval |
 | `Services/ProfileStore.swift` | 300 | Persists and mutates `CallProfile`s; the one-time Profiles 2.0 migration (backup, sharing ids, restore point, report choice); import / apply / restore a `.parrotprofile` (privacy only tightens) |
 | `Services/ProfilePresets.swift` | 300 | Built-in starter profiles (eight, incl. the buyer-side "Vendor call" and "Investor pitch") and their report templates |
 | `Services/ExportService.swift` | 265 | Export: TXT, SRT, Markdown (front matter, next-step checklist instead of repeated sections); `Parts` limits what an AI app gets |
@@ -94,7 +98,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/MCPBundle.swift` | 150 | One-click connect: Claude Desktop `.mcpb` (manifest, launcher that finds a moved app, icon), Cursor link, Claude Code / Codex commands |
 | `Services/ParrotLink.swift` | 45 | Open-in-Parrot links: AI apps get `openparrot.app/open#m=<id>&t=` (the site hands on to `openparrot://`), ParrotAppDelegate opens them, reopening the window if closed |
 | `Services/CloudGate.swift` | 60 | On-device-only switch: global or per-call holds; checked by every cloud path |
-| `Services/Redactor.swift` | 200 | Hide emails/phones/cards/IBANs/names from cloud AI and restore them; request/result helpers |
+| `Services/Redactor.swift` | 182 | Hide private details in cloud text; selection-only projection keeps original reviewed replies/evidence local |
 | `Services/Retention.swift` | 55 | Automatic clean-up rules (audio / whole meetings after N days) |
 | `Services/RecordingManager+Privacy.swift` | 100 | Consent recording, retention run, PrivacyLedger ("what left this Mac") |
 | `Services/CopilotSetupState.swift` | 91 | Settings each Copilot path writes, auto-enable when the Ollama model lands, Copilot status for Ready and Home |
@@ -115,7 +119,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Views/CopilotPanelView.swift` | 809 | Live insight cards, pinned blockers, short suggested replies with expandable evidence; hides empty coaching panel |
 | `Views/BriefViews.swift` | 147 | Brief summary line, documents-in-play row, live "Briefed" card (dashboard + copilot panel) |
 | `Views/SettingsCards.swift` | 191 | Settings building blocks: page, titled card, row (optional header tint), tag chip (the landing-page window look) |
-| `Views/KnowledgeSettingsView.swift` | 442 | Settings → Knowledge: folders, Use for pills and menu, About line, search, drag to move; `KnowledgeList` pure helpers |
+| `Views/KnowledgeSettingsView.swift` | 460 | Knowledge folders, document scopes/imports, signed JSON library import and source-admission status |
 | `Views/MeetingDetailView.swift` | 1790 | Post-call tabs: transcript, insights, report (Write report when there is none); header with About and the note's first lines; receipts actions, bookmarks card/rows; speaker naming popover (a type-to-filter list of every name from `SpeakerNameOptions`; a name another voice has merges them, also on open); `SortedLines` (cached time order + binary-search playing line) |
 | `Views/BugReportSheet.swift` | 150 | Bug/idea report form + the corner ladybug button |
 | `Views/ReportContentView.swift` | 550 | Report section cards, scorecard rows, talk-ratio bar, prose parser (incl. one-line local reports; knows the meeting's template titles), receipt chips + popover |
@@ -164,6 +168,8 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Package.swift` | SwiftPM deps (WhisperKit, vendored CSpeexDSP) |
 | `scripts/release.sh` | Release packaging; mirrors the Makefile's bundle step; builds `Parrot.mcpb` and `server.json`; refuses a version `WhatsNew` doesn't describe and embeds its notes in the appcast |
 | `scripts/assemble-help.sh` | Builds the Apple Help Book into the .app from `docs/help/` (both builders call it) |
+| `scripts/catalog-sign.swift` | Local Ed25519 artifact signer; private key stays outside source/CI/vault; requires an approved payload hash before signing |
+| `scripts/build-local-candidate.sh` | Private-test Mac CI build: full harness, commit-specific ad-hoc bundle identity, session-only keys, updates off, signature/archive/startup receipts; never installs production |
 | `integrations/claude-plugin/` | Claude plugin for the connector directory: `.mcp.json` + `server/launch.sh` (same launcher as the release `.mcpb`, harness-checked), seven skills mirroring the MCP prompts, README, PRIVACY |
 | `server.json` | MCP Registry entry, written by `scripts/release.sh` per release (version, `.mcpb` URL, sha256) |
 | `docs/help/` | User guide: one HTML set serving GitHub Pages AND the in-app Help menu |

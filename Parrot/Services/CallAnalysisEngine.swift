@@ -469,7 +469,9 @@ final class CallAnalysisEngine {
             calendarContext: calendarContext,
             previousCallContext: previousCallContext,
             previousCallIsPrivate: previousCallIsPrivate,
-            forceLocal: forceLocal
+            forceLocal: forceLocal,
+            reviewedCatalog: profile?.allowGeneralKnowledge == false
+                ? knowledgeBase?.reviewedAnswerSnapshot(for: profile?.id) : nil
         )
 
         if currentQuestion != nil && !request.allowGeneralKnowledge {
@@ -485,6 +487,22 @@ final class CallAnalysisEngine {
             let result = try await provider.analyze(request)
             guard isActive, !Task.isCancelled else {
                 if !Task.isCancelled { analysisTask = nil }
+                return
+            }
+            if !request.allowGeneralKnowledge,
+               knowledgeBase?.reviewedAnswerSnapshot(for: profile?.id)?.revisionToken
+                    != request.reviewedCatalog?.revisionToken {
+                // Scope, text or library changed while the selector was in flight.
+                // The old snapshot no longer authorizes inserting this reply.
+                clearPendingExcerpts()
+                lastAnalyzedCount = previousAnalyzedCount
+                oldestPendingSince = previousPendingSince
+                analysisTask = nil
+                analysisHasQuestion = nil
+                status = .listening
+                pendingUrgent = true
+                rerunRequested = false
+                triggerAnalysis()
                 return
             }
             // Retrieval alone is not an answer. Remove every interim status

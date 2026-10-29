@@ -119,9 +119,12 @@ final class OpenAICompatibleProvider: AnalysisProvider {
     /// Which kind this instance serves — a closure so the live/reports split can
     /// hand one instance per role and Settings changes apply on the next call.
     private let kindSource: () -> CopilotProviderKind
+    private let session: URLSession
 
-    init(kindSource: @escaping () -> CopilotProviderKind = { CopilotProviderKind.selected }) {
+    init(session: URLSession = .shared,
+         kindSource: @escaping () -> CopilotProviderKind = { CopilotProviderKind.selected }) {
         self.kindSource = kindSource
+        self.session = session
     }
 
     private struct Config {
@@ -177,6 +180,17 @@ final class OpenAICompatibleProvider: AnalysisProvider {
     // MARK: - AnalysisProvider
 
     func analyze(_ request: AnalysisRequest) async throws -> AnalysisResult {
+        if !request.allowGeneralKnowledge,
+           let catalog = request.reviewedCatalog {
+            // This backend has no reviewed-ID selector. A configured library
+            // must never silently fall back to free-form product claims.
+            guard request.currentQuestion?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                return AnalysisResult(insights: [], sentiment: [:], read: nil, coach: nil, resolved: [])
+            }
+            let draft = ClaudeAnalysisProvider.reviewedAnswerDraft(from: nil, request: request,
+                catalog: catalog, candidates: [])
+            return AnalysisResult(insights: [draft], sentiment: [:], read: nil, coach: nil, resolved: [])
+        }
         guard let config = currentConfig() else {
             throw AnalysisError.badResponse("Assistant model not set up. Check Settings → Assistant.")
         }
@@ -371,7 +385,7 @@ final class OpenAICompatibleProvider: AnalysisProvider {
         }
 
         for attempt in 0..<2 {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 throw AnalysisError.badResponse("No HTTP response")
             }
@@ -431,7 +445,7 @@ final class OpenAICompatibleProvider: AnalysisProvider {
         // ponytail: single retry with fixed backoff on transient failures,
         // mirroring ClaudeAnalysisProvider.
         for attempt in 0..<2 {
-            let (data, response) = try await URLSession.shared.data(for: request)
+            let (data, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else {
                 throw AnalysisError.badResponse("No HTTP response")
             }
@@ -483,13 +497,21 @@ final class OpenAICompatibleProvider: AnalysisProvider {
 /// at most one meeting's rows (same accepted edge as the transcription-backend
 /// note in RecordingManager.writeAIUsage).
 final class SwitchingAnalysisProvider: AnalysisProvider {
-    private let claude = ClaudeAnalysisProvider()
+    private let claude: ClaudeAnalysisProvider
     private let liveCompat = OpenAICompatibleProvider { SwitchingAnalysisProvider.liveKind }
     private let reportsCompat = OpenAICompatibleProvider { SwitchingAnalysisProvider.reportsKind }
     private let askCompat = OpenAICompatibleProvider { SwitchingAnalysisProvider.askKind }
     /// Ollama, for live passes of an on-device-only call whatever the
     /// Settings choice.
-    private let localCompat = OpenAICompatibleProvider { .ollama }
+    private let localCompat: OpenAICompatibleProvider
+
+    /// The same routing/privacy path is exercised with an isolated HTTP
+    /// session by the logic harness; normal callers keep the default provider.
+    init(claude: ClaudeAnalysisProvider = ClaudeAnalysisProvider(),
+         localCompatible: OpenAICompatibleProvider? = nil) {
+        self.claude = claude
+        self.localCompat = localCompatible ?? OpenAICompatibleProvider { .ollama }
+    }
 
     /// On-device only (CloudGate) routes both roles to Ollama.
     static var liveKind: CopilotProviderKind {
@@ -555,7 +577,11 @@ final class SwitchingAnalysisProvider: AnalysisProvider {
         guard Redactor.isEnabled else { return try await liveProvider.analyze(outgoing) }
         var redactor = Redactor()
         let result = try await liveProvider.analyze(redactor.redact(outgoing))
-        return redactor.restore(result)
+        // Reviewed wording/evidence were selected locally from the original
+        // catalog. Replacing placeholders in them would alter approved text.
+        let reviewedReply = request.currentQuestion != nil && !request.allowGeneralKnowledge
+            && request.reviewedCatalog != nil
+        return reviewedReply ? result : redactor.restore(result)
     }
 
     func summarize(transcript: String, insightTitles: [String], bookmarks: [String],

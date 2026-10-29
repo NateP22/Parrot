@@ -15,10 +15,19 @@ make bundle CONFIG=release SIGN_IDENTITY=- VERSION=0.29.7-local-test \
 python3 - <<'PY'
 from pathlib import Path
 import plistlib
+import subprocess
 app = Path('dist/Parrot.app')
 info = app / 'Contents/Info.plist'
 p = plistlib.loads(info.read_bytes())
-p['ParrotKeychainService'] = 'com.uygar.parrot.local-test'
+# Ad-hoc code requirements change between builds. Give each frozen candidate
+# its own test identity so a stale grant for an older binary cannot masquerade
+# as permission for this one. Production's bundle, store and grant stay separate.
+commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+test_id = 'com.uygar.parrot.sat54-' + commit[:12]
+p['CFBundleIdentifier'] = test_id
+p['CFBundleName'] = 'Parrot SAT54 Test'
+p['CFBundleDisplayName'] = 'Parrot SAT54 Test'
+p['ParrotKeychainService'] = test_id + '.session-only'
 p['ParrotSessionOnlyCredentials'] = True
 p['SUEnableAutomaticChecks'] = False
 p['SUAutomaticallyUpdate'] = False
@@ -30,6 +39,9 @@ e = plistlib.loads(Path('Parrot/Parrot.entitlements').read_bytes())
 e['com.apple.security.cs.disable-library-validation'] = True
 Path('build-evidence/test-entitlements.plist').write_bytes(plistlib.dumps(e))
 assert p['ParrotSessionOnlyCredentials'] and 'SUFeedURL' not in p
+assert p['CFBundleIdentifier'] != 'com.uygar.parrot'
+Path('build-evidence/test-bundle-id.txt').write_text(test_id + '\n')
+Path('build-evidence/test-info.plist').write_bytes(info.read_bytes())
 PY
 codesign --force --options runtime --timestamp=none \
   --entitlements build-evidence/test-entitlements.plist --sign - dist/Parrot.app

@@ -69,6 +69,10 @@ struct KBDocument: Codable, Identifiable {
     var note: String = ""
     var chunkCount: Int
     var addedAt: Date
+    /// SHA-256 of the exact extracted UTF-8 text before chunking. A reviewed
+    /// fact catalog may only use facts matching this imported source version.
+    /// Legacy documents have no digest until normally re-imported.
+    var contentSHA256: String?
     /// Pre-folders call-type tags. Read only to upgrade (`migrated()`).
     var profileIDs: Set<UUID> = []
     /// nil = No folder.
@@ -76,15 +80,17 @@ struct KBDocument: Codable, Identifiable {
     /// nil = Same as folder.
     var scope: KBScope?
 
-    enum CodingKeys: String, CodingKey { case id, name, note, chunkCount, addedAt, profileIDs, folderID, scope }
+    enum CodingKeys: String, CodingKey { case id, name, note, chunkCount, addedAt, contentSHA256, profileIDs, folderID, scope }
 
     init(id: UUID = UUID(), name: String, note: String = "", chunkCount: Int, addedAt: Date,
-         profileIDs: Set<UUID> = [], folderID: UUID? = nil, scope: KBScope? = nil) {
+         profileIDs: Set<UUID> = [], folderID: UUID? = nil, scope: KBScope? = nil,
+         contentSHA256: String? = nil) {
         self.id = id
         self.name = name
         self.note = note
         self.chunkCount = chunkCount
         self.addedAt = addedAt
+        self.contentSHA256 = Self.validContentSHA256(contentSHA256)
         self.profileIDs = profileIDs
         self.folderID = folderID
         self.scope = scope
@@ -100,6 +106,9 @@ struct KBDocument: Codable, Identifiable {
         note = try c.decodeIfPresent(String.self, forKey: .note) ?? ""
         chunkCount = try c.decode(Int.self, forKey: .chunkCount)
         addedAt = try c.decode(Date.self, forKey: .addedAt)
+        // New optional metadata must not make a legacy or malformed record
+        // fail the whole knowledge index. Unknown provenance stays unknown.
+        contentSHA256 = Self.validContentSHA256(try? c.decode(String.self, forKey: .contentSHA256))
         profileIDs = try c.decodeIfPresent(Set<UUID>.self, forKey: .profileIDs) ?? []
         folderID = try c.decodeIfPresent(UUID.self, forKey: .folderID)
         // A scope this build can't read falls back to Same as folder
@@ -115,6 +124,7 @@ struct KBDocument: Codable, Identifiable {
         try c.encode(note, forKey: .note)
         try c.encode(chunkCount, forKey: .chunkCount)
         try c.encode(addedAt, forKey: .addedAt)
+        try c.encodeIfPresent(Self.validContentSHA256(contentSHA256), forKey: .contentSHA256)
         try c.encodeIfPresent(folderID, forKey: .folderID)
         try c.encodeIfPresent(scope, forKey: .scope)
     }
@@ -139,6 +149,12 @@ struct KBDocument: Codable, Identifiable {
     var displayName: String {
         let ext = (name as NSString).pathExtension.lowercased()
         return ["md", "markdown", "txt", "text", "pdf"].contains(ext) ? (name as NSString).deletingPathExtension : name
+    }
+
+    static func validContentSHA256(_ value: String?) -> String? {
+        guard let value = value?.lowercased(), value.count == 64,
+              value.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return nil }
+        return value
     }
 }
 

@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import NaturalLanguage
 import Observation
 import PDFKit
@@ -18,17 +19,24 @@ final class KnowledgeBaseService {
     private(set) var lastError: String?
 
     private var chunks: [KBChunk] = []
+    private var reviewedCatalog: ReviewedAnswerCatalog?
+    private var reviewedCatalogError: String?
+    private var hasReviewedCatalog = false
 
     var isEmpty: Bool { documents.isEmpty }
 
     private let persistent: Bool
+    /// Explicit isolated storage for harnesses; default app storage is unchanged.
+    private let storageURL: URL?
     /// The loaded index predates folders: the first save keeps a copy.
     private var upgradedFromLegacy = false
 
-    init(persistent: Bool = true) {
+    init(persistent: Bool = true, storageURL: URL? = nil) {
         self.persistent = persistent
+        self.storageURL = storageURL
         if persistent {
             load()
+            loadReviewedCatalog()
             Task { await refreshEmbeddings() }
         }
     }
@@ -52,6 +60,16 @@ final class KnowledgeBaseService {
         }
 
         let name = url.lastPathComponent
+        if url.pathExtension.lowercased() == "json" {
+            do {
+                let data = try Self.readReviewedCatalogData(at: url)
+                try installReviewedCatalog(data)
+            } catch {
+                markReviewedCatalogImportFailure(error)
+                lastError = error.localizedDescription
+            }
+            return
+        }
         if let conflict = Self.addConflict(name: name, into: folderID, documents: documents, folders: folders) {
             lastError = conflict
             return
@@ -89,7 +107,8 @@ final class KnowledgeBaseService {
         chunks.removeAll { $0.documentName == name }
         chunks.append(contentsOf: embedded)
         documents = Self.replacing(documents, with: KBDocument(
-            name: name, chunkCount: embedded.count, addedAt: .now, folderID: folderID))
+            name: name, chunkCount: embedded.count, addedAt: .now, folderID: folderID,
+            contentSHA256: Self.contentDigest(text)))
         save()
     }
 
@@ -239,6 +258,70 @@ final class KnowledgeBaseService {
     /// (nil = every document that isn't off). Mirrors `search`.
     func documentsInPlay(for profileID: UUID?) -> [String] {
         documents.filter { isInPlay($0, callType: profileID) }.map(\.name)
+    }
+
+    var reviewedAnswerStatus: String? {
+        guard hasReviewedCatalog else { return nil }
+        if reviewedCatalogError != nil { return "Reviewed answers unavailable — re-import the library." }
+        guard let reviewedCatalog else { return nil }
+        let active = reviewedCatalog.admitted(documents: documents, folders: folders, profileID: nil)
+        return "\(active.answers.count) of \(reviewedCatalog.answers.count) reviewed replies match imported sources."
+    }
+
+    func reviewedAnswerSnapshot(for profileID: UUID?) -> ReviewedAnswerCatalog.Snapshot? {
+        guard hasReviewedCatalog else { return nil }
+        guard let reviewedCatalog else {
+            return .unavailable(reviewedCatalogError ?? "Reviewed library unavailable")
+        }
+        return reviewedCatalog.admitted(documents: documents, folders: folders, profileID: profileID)
+    }
+
+    /// Validation and disk readback finish before replacing the active library.
+    /// Invalid input never becomes an ordinary document or erases a working library.
+    func installReviewedCatalog(_ data: Data) throws {
+        hasReviewedCatalog = true
+        do {
+            reviewedCatalog = try persistent
+                ? reviewedStore.install(data) : ReviewedAnswerCatalog.decode(data)
+            reviewedCatalogError = nil
+        }
+        catch {
+            markReviewedCatalogImportFailure(error)
+            throw error
+        }
+    }
+
+    private func markReviewedCatalogImportFailure(_ error: Error) {
+        hasReviewedCatalog = true
+        if reviewedCatalog == nil { reviewedCatalogError = error.localizedDescription }
+        if persistent {
+            do { try reviewedStore.requireReviewedAnswers() }
+            catch { reviewedCatalogError = "Couldn't preserve reviewed-answer mode: " + error.localizedDescription }
+        }
+    }
+
+    private var reviewedCatalogURL: URL {
+        indexURL.deletingLastPathComponent().appendingPathComponent("reviewed-answers.json")
+    }
+
+    private var reviewedStore: ReviewedAnswerStore {
+        ReviewedAnswerStore(url: reviewedCatalogURL)
+    }
+
+    private static func readReviewedCatalogData(at url: URL) throws -> Data {
+        try ReviewedAnswerStore.readData(at: url)
+    }
+
+    private func loadReviewedCatalog() {
+        guard reviewedStore.isConfigured else { return }
+        hasReviewedCatalog = true
+        do {
+            reviewedCatalog = try reviewedStore.load()
+            reviewedCatalogError = nil
+        } catch {
+            reviewedCatalog = nil
+            reviewedCatalogError = error.localizedDescription
+        }
     }
 
     // MARK: - Retrieval
@@ -402,6 +485,10 @@ final class KnowledgeBaseService {
     }
 
     // MARK: - Text Extraction & Chunking
+
+    nonisolated static func contentDigest(_ text: String) -> String {
+        SHA256.hash(data: Data(text.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 
     private nonisolated static func extractText(from url: URL) -> String? {
         if url.pathExtension.lowercased() == "pdf" {
@@ -616,6 +703,8 @@ final class KnowledgeBaseService {
         var chunks: [KBChunk]
     }
 
+    private var indexURL: URL { storageURL ?? Self.storeURL }
+
     private static var storeURL: URL {
         // Dev harnesses point this at the sandboxed app's real index
         // (~/Library/Containers/com.uygar.parrot/…/KnowledgeBase/index.json)
@@ -631,7 +720,7 @@ final class KnowledgeBaseService {
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: Self.storeURL) else { return }
+        guard let data = try? Data(contentsOf: indexURL) else { return }
         do {
             let store = try JSONDecoder().decode(Store.self, from: data)
             chunks = store.chunks
@@ -650,9 +739,9 @@ final class KnowledgeBaseService {
             // not — move it aside so the data stays recoverable.
             let stamp = ISO8601DateFormatter().string(from: .now)
                 .replacingOccurrences(of: ":", with: "-")
-            let backup = Self.storeURL.deletingLastPathComponent()
+            let backup = indexURL.deletingLastPathComponent()
                 .appendingPathComponent("index-corrupt-\(stamp).json")
-            try? FileManager.default.moveItem(at: Self.storeURL, to: backup)
+            try? FileManager.default.moveItem(at: indexURL, to: backup)
             NSLog("Parrot: knowledge base index failed to decode (\(error.localizedDescription)) — moved aside to \(backup.lastPathComponent)")
         }
     }
@@ -663,13 +752,13 @@ final class KnowledgeBaseService {
             Store(version: 2, documents: documents, folders: folders, chunks: chunks)) else { return }
         if upgradedFromLegacy {
             // One copy of the pre-folders index, in case anyone goes back.
-            let backup = Self.storeURL.deletingLastPathComponent()
+            let backup = indexURL.deletingLastPathComponent()
                 .appendingPathComponent("index-backup-before-folders.json")
             if !FileManager.default.fileExists(atPath: backup.path) {
-                try? FileManager.default.copyItem(at: Self.storeURL, to: backup)
+                try? FileManager.default.copyItem(at: indexURL, to: backup)
             }
             upgradedFromLegacy = false
         }
-        try? data.write(to: Self.storeURL, options: .atomic)
+        try? data.write(to: indexURL, options: .atomic)
     }
 }

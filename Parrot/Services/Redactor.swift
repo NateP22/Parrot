@@ -151,6 +151,17 @@ extension Redactor {
         copy.previousCallContext = redact(r.previousCallContext)
         copy.previousCallIsPrivate = r.previousCallIsPrivate
         copy.forceLocal = r.forceLocal
+        copy.reviewedCatalog = r.reviewedCatalog
+        copy.reviewedQuestionKey = r.reviewedQuestionKey ?? r.currentQuestion
+        if let catalog = r.reviewedCatalog {
+            let candidates = catalog.candidates(question: r.reviewedQuestionKey ?? r.currentQuestion ?? "",
+                referenceNames: Set(r.references.map(\.documentName)))
+            copy.reviewedSelectionEntries = catalog.selectionEntries(for: candidates).map { entry in
+                ReviewedAnswerCatalog.SelectionEntry(id: entry.id, reply: redact(entry.reply),
+                    applicability: redact(entry.applicability),
+                    excludedScopes: entry.excludedScopes.map { redact($0) })
+            }
+        }
         return copy
     }
 

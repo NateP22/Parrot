@@ -31,6 +31,8 @@ enum ProfileTest {
         testUrgentQuestionPreemption()
         testSnapshotPersistence()
         testLenientKBDecode()
+        ReviewedAnswerTests.run { check($0, $1) }
+        ReviewedTransportTests.runSync { check($0, $1) }
         testStableHash()
         testNearDuplicate()
         testSupersedes()
@@ -342,11 +344,15 @@ enum ProfileTest {
 
         // Re-adding a file is an update: About line, folder and Use for stay.
         let old = KBDocument(name: "terms.md", note: "Signed terms, 2026", chunkCount: 3, addedAt: .distantPast,
-                             folderID: deal.id, scope: .only([vendor]))
+                             folderID: deal.id, scope: .only([vendor]), contentSHA256: String(repeating: "a", count: 64))
         let updated = KnowledgeBaseService.replacing([old], with: KBDocument(name: "terms.md", chunkCount: 5, addedAt: .now))
         check("kb: re-adding keeps About, folder and Use for",
               updated.count == 1 && updated[0].note == "Signed terms, 2026" && updated[0].folderID == deal.id
                 && updated[0].scope == .only([vendor]) && updated[0].chunkCount == 5)
+        check("kb: an unknown replacement never inherits old source provenance", updated[0].contentSHA256 == nil)
+        let changed = KnowledgeBaseService.replacing([old], with: KBDocument(name: "terms.md", chunkCount: 5, addedAt: .now,
+                                                                           contentSHA256: String(repeating: "b", count: 64)))
+        check("kb: replacement uses the new source digest", changed.first?.contentSHA256 == String(repeating: "b", count: 64))
 
         // Two deals often hold files with the same name: adding one into a
         // different folder must not replace the other deal's document.
@@ -676,6 +682,27 @@ enum ProfileTest {
         check("KB doc decodes without note", doc != nil)
         check("KB doc missing note defaults empty", doc?.note == "")
         check("KB doc missing profileIDs defaults empty", doc?.profileIDs.isEmpty == true)
+        check("KB legacy provenance stays unknown", doc?.contentSHA256 == nil)
+        let digest = KnowledgeBaseService.contentDigest("abc")
+        check("KB content digest matches SHA-256 reference",
+              digest == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad")
+        check("KB content digest preserves line breaks and Unicode",
+              KnowledgeBaseService.contentDigest("α\n\nβ\n") != KnowledgeBaseService.contentDigest("α\nβ\n"))
+        let fingerprinted = KBDocument(name: "source.md", chunkCount: 1, addedAt: .now,
+                                       contentSHA256: digest.uppercased())
+        let roundTrip = (try? JSONEncoder().encode(fingerprinted))
+            .flatMap { try? JSONDecoder().decode(KBDocument.self, from: $0) }
+        check("KB provenance round-trips canonically", roundTrip?.contentSHA256 == digest)
+        let original = (try? JSONSerialization.jsonObject(with: legacy)) as? [String: Any] ?? [:]
+        let invalid: [Any] = ["not-a-hash", String(repeating: "a", count: 64) + "\n", 42, NSNull()]
+        for value in invalid {
+            var object = original
+            object["contentSHA256"] = value
+            let decoded = (try? JSONSerialization.data(withJSONObject: object))
+                .flatMap { try? decoder.decode(KBDocument.self, from: $0) }
+            check("KB malformed optional provenance cannot drop the document",
+                  decoded?.name == "pricing.pdf" && decoded?.contentSHA256 == nil)
+        }
     }
 
     static func testNearDuplicate() {
@@ -2786,7 +2813,8 @@ enum ProfileTest {
             ])
         }
         let yes: [String: Any] = ["supported": true, "answers_question": true,
-                                 "preserves_conditions": true, "clear_and_sayable": true]
+                                 "preserves_conditions": true, "clear_and_sayable": true,
+                                 "missing_conditions": [String](), "unclear_terms": [String]()]
         check("review requires all explicit positive judgments", A.evidenceReviewPassed(reviewData(yes)))
         for key in ["supported", "answers_question", "preserves_conditions", "clear_and_sayable"] {
             var no = yes
@@ -2794,6 +2822,13 @@ enum ProfileTest {
             check("review rejects a failed judgment: \(key)", !A.evidenceReviewPassed(reviewData(no)))
             no.removeValue(forKey: key)
             check("review rejects a missing judgment: \(key)", !A.evidenceReviewPassed(reviewData(no)))
+        }
+        for key in ["missing_conditions", "unclear_terms"] {
+            var rejected = yes
+            rejected[key] = ["An essential problem"]
+            check("review rejects a reported problem: \(key)", !A.evidenceReviewPassed(reviewData(rejected)))
+            rejected.removeValue(forKey: key)
+            check("review rejects a missing problem list: \(key)", !A.evidenceReviewPassed(reviewData(rejected)))
         }
         check("truncated review is not approval",
               !A.evidenceReviewPassed(reviewData(yes, stop: "max_tokens")))
@@ -2835,9 +2870,14 @@ enum ProfileTest {
         let reviewSchema = reviewFormat?["schema"] as? [String: Any]
         check("review schema requires a separate clarity judgment",
               (reviewSchema?["required"] as? [String])?.contains("clear_and_sayable") == true)
+        check("review schema requires missing conditions and unclear terms",
+              (reviewSchema?["required"] as? [String])?.contains("missing_conditions") == true &&
+              (reviewSchema?["required"] as? [String])?.contains("unclear_terms") == true)
         let reviewMessages = reviewBody?["messages"] as? [[String: String]]
         let reviewText = reviewMessages?.first?["content"] ?? ""
         let reviewContent = (try? JSONSerialization.jsonObject(with: Data(reviewText.utf8))) as? [String: Any]
+        check("review is not anchored to the draft's proposed citations",
+              reviewContent?["proposed_evidence"] == nil)
         check("review receives the question and actual proposed reply",
               reviewContent?["question"] as? String == question &&
               reviewContent?["answer"] as? String == generated.reply)
@@ -2949,9 +2989,9 @@ enum ProfileTest {
         let untrusted = try? ClaudeAnalysisProvider.parseResult(from: main)
         check("transport: fixture actually contains untrusted coaching and resolution",
               untrusted?.read != nil && untrusted?.coach != nil && untrusted?.resolved == ["Earlier issue"])
-        let yes = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p0"]}"#
-        let yesCheck = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":[]}"#
-        let no = #"{"supported":true,"answers_question":false,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":[]}"#
+        let yes = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"missing_conditions":[],"unclear_terms":[],"clear_and_sayable":true,"evidence_ids":["p0"]}"#
+        let yesCheck = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"missing_conditions":[],"unclear_terms":[],"clear_and_sayable":true,"evidence_ids":[]}"#
+        let no = #"{"supported":true,"answers_question":false,"preserves_conditions":true,"missing_conditions":[],"unclear_terms":[],"clear_and_sayable":true,"evidence_ids":[]}"#
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [EvidenceTransport.self]
         let session = URLSession(configuration: config)
@@ -2992,10 +3032,12 @@ enum ProfileTest {
         let multiMessages = multiBody?["messages"] as? [[String: String]]
         let multiText = multiMessages?.first?["content"] ?? ""
         let multiReview = (try? JSONSerialization.jsonObject(with: Data(multiText.utf8))) as? [String: Any]
-        check("review sees original source names paired with their exact selected blocks",
-              multiReview?["proposed_evidence"] as? [[String: String]] == [
-                ["source": source, "text": evidence],
-                ["source": "Other guide.md", "text": "Unrelated passage."],
+        check("review sees all original sources without favoring the draft's selection",
+              multiReview?["proposed_evidence"] == nil &&
+              multiReview?["available_evidence"] as? [[String: String]] == [
+                ["id": "p0", "source": source, "text": evidence],
+                ["id": "p1", "source": "Other guide.md", "text": "Unrelated passage."],
+                ["id": "p2", "source": source, "text": "An unrelated passage in the same guide."],
               ])
         for invalid in [
             strictPacket(evidence, ["p999"]), strictPacket(evidence, ["p0", "p0"]),
@@ -3059,7 +3101,7 @@ enum ProfileTest {
               repaired?.insights.first?.reply == evidence &&
               repaired?.insights.first?.detail.contains("[p0] " + source + "\n" + evidence) == true &&
               repaired?.insights.first?.detail.contains("An unrelated passage") == false)
-        let unknownSource = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p1"]}"#
+        let unknownSource = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"missing_conditions":[],"unclear_terms":[],"clear_and_sayable":true,"evidence_ids":["p1"]}"#
         let rejectedSource = run(.response(packet(unknownSource), 200))
         check("transport: reviewer cannot authorize a document outside the request allowlist",
               rejectedSource?.insights.first?.source == nil && rejectedSource?.insights.first?.reply == nil)
@@ -3081,10 +3123,13 @@ enum ProfileTest {
             .response(packet(yes, stop: "refusal"), 200),
             .response(packet(yes, stop: "max_tokens"), 200),
             .response(Data("malformed".utf8), 200),
-            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true}"#), 200),
-            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p999"]}"#), 200),
-            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"evidence_ids":["p0"]}"#), 200),
-            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":false,"evidence_ids":["p0"]}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"missing_conditions":[],"unclear_terms":[],"clear_and_sayable":true}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"missing_conditions":[],"unclear_terms":[],"clear_and_sayable":true,"evidence_ids":["p999"]}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"missing_conditions":[],"unclear_terms":[],"evidence_ids":["p0"]}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"missing_conditions":[],"unclear_terms":[],"clear_and_sayable":false,"evidence_ids":["p0"]}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p0"]}"#), 200),
+            .response(packet(#"{"missing_conditions":["Required switch"],"unclear_terms":[],"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p0"]}"#), 200),
+            .response(packet(#"{"missing_conditions":[],"unclear_terms":["Unclear phrase"],"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p0"]}"#), 200),
             .response(Data(), 500),
             .failure(URLError(.timedOut)),
         ] {
