@@ -2786,9 +2786,9 @@ enum ProfileTest {
             ])
         }
         let yes: [String: Any] = ["supported": true, "answers_question": true,
-                                 "preserves_conditions": true]
+                                 "preserves_conditions": true, "clear_and_sayable": true]
         check("review requires all explicit positive judgments", A.evidenceReviewPassed(reviewData(yes)))
-        for key in ["supported", "answers_question", "preserves_conditions"] {
+        for key in ["supported", "answers_question", "preserves_conditions", "clear_and_sayable"] {
             var no = yes
             no[key] = false
             check("review rejects a failed judgment: \(key)", !A.evidenceReviewPassed(reviewData(no)))
@@ -2830,6 +2830,11 @@ enum ProfileTest {
         let reviewBody = try? A.evidenceReviewBody(generated, question: question,
             references: [reference, KBReference(documentName: "Another document.md",
                                                note: nil, text: "Unrelated text.")])
+        let reviewConfig = reviewBody?["output_config"] as? [String: Any]
+        let reviewFormat = reviewConfig?["format"] as? [String: Any]
+        let reviewSchema = reviewFormat?["schema"] as? [String: Any]
+        check("review schema requires a separate clarity judgment",
+              (reviewSchema?["required"] as? [String])?.contains("clear_and_sayable") == true)
         let reviewMessages = reviewBody?["messages"] as? [[String: String]]
         let reviewText = reviewMessages?.first?["content"] ?? ""
         let reviewContent = (try? JSONSerialization.jsonObject(with: Data(reviewText.utf8))) as? [String: Any]
@@ -2944,9 +2949,9 @@ enum ProfileTest {
         let untrusted = try? ClaudeAnalysisProvider.parseResult(from: main)
         check("transport: fixture actually contains untrusted coaching and resolution",
               untrusted?.read != nil && untrusted?.coach != nil && untrusted?.resolved == ["Earlier issue"])
-        let yes = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"evidence_ids":["p0"]}"#
-        let yesCheck = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"evidence_ids":[]}"#
-        let no = #"{"supported":true,"answers_question":false,"preserves_conditions":true,"evidence_ids":[]}"#
+        let yes = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p0"]}"#
+        let yesCheck = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":[]}"#
+        let no = #"{"supported":true,"answers_question":false,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":[]}"#
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [EvidenceTransport.self]
         let session = URLSession(configuration: config)
@@ -3054,7 +3059,7 @@ enum ProfileTest {
               repaired?.insights.first?.reply == evidence &&
               repaired?.insights.first?.detail.contains("[p0] " + source + "\n" + evidence) == true &&
               repaired?.insights.first?.detail.contains("An unrelated passage") == false)
-        let unknownSource = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"evidence_ids":["p1"]}"#
+        let unknownSource = #"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p1"]}"#
         let rejectedSource = run(.response(packet(unknownSource), 200))
         check("transport: reviewer cannot authorize a document outside the request allowlist",
               rejectedSource?.insights.first?.source == nil && rejectedSource?.insights.first?.reply == nil)
@@ -3076,8 +3081,10 @@ enum ProfileTest {
             .response(packet(yes, stop: "refusal"), 200),
             .response(packet(yes, stop: "max_tokens"), 200),
             .response(Data("malformed".utf8), 200),
-            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true}"#), 200),
-            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"evidence_ids":["p999"]}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":true,"evidence_ids":["p999"]}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"evidence_ids":["p0"]}"#), 200),
+            .response(packet(#"{"supported":true,"answers_question":true,"preserves_conditions":true,"clear_and_sayable":false,"evidence_ids":["p0"]}"#), 200),
             .response(Data(), 500),
             .failure(URLError(.timedOut)),
         ] {

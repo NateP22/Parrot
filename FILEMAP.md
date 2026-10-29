@@ -53,7 +53,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/EngineRecommendation.swift` | 25 | The model a new install starts on: Parakeet only when every Mac language and past call fits its 25 |
 | `Services/CloudTranscription.swift` | 452 | Opt-in Groq (batch) and Deepgram (streaming; finals carry the words' spoken span) backends + WAV encode; `TranscriptPolisher`: the post-call Groq re-decode, which skips Me lines the echo gate calls echo |
 | `Services/DiarizationEngine.swift` | 156 | FluidAudio pyannote diarization (CoreML): labels + per-speaker embeddings; whole file or a live 60 s tail |
-| `Services/AnalysisProvider.swift` | 1381 | Claude Haiku 5.5; short strict answers mapped to original passage IDs, independent claim/citation review, attributed AI report receipts; provider protocol, prompts, Keychain helpers |
+| `Services/AnalysisProvider.swift` | 1389 | Claude Haiku 5.5; short strict answers mapped to original passage IDs, required support/conditions/clarity review, attributed AI report receipts; provider protocol, prompts, Keychain helpers |
 | `Services/OpenAICompatibleProvider.swift` | 528 | OpenAI-shaped LLM client (incl. Ollama); provider switching |
 | `Services/CallAnalysisEngine.swift` | 960 | Drives live Copilot passes; strict questions replace obsolete ambient work, with cancellation guards across retrieval; source retrieval and stale-coaching clearing; per-pace question floor; Jev excerpt fast path; mid-call On/Off |
 | `Services/JevDocMatcher.swift` | 175 | TypeSafe "Jev" client: one probability per KB chunk that it answers the question; same-issue verdicts for card dedup |
