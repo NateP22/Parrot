@@ -100,9 +100,16 @@ struct ReviewedAnswerCatalog: Codable {
         private let scopeDefinitions: [ReviewedQuestionScope]
 
         var revisionToken: String {
-            ReviewedAnswerCatalog.digest(["snapshot-v2", String(sources.count)]
-                + sources.map(\.id).sorted() + [String(answers.count)] + answers.map(\.id).sorted()
-                + [String(scopeDefinitions.count)] + scopeDefinitions.map { ReviewedAnswerCatalog.digest($0.digestParts) }.sorted())
+            // Explicit steps keep Xcode 16's type checker within its budget.
+            // The ordered, length-prefixed digest input is unchanged.
+            var parts: [String] = ["snapshot-v2", String(sources.count)]
+            parts.append(contentsOf: sources.map(\.id).sorted())
+            parts.append(String(answers.count))
+            parts.append(contentsOf: answers.map(\.id).sorted())
+            parts.append(String(scopeDefinitions.count))
+            let scopes: [String] = scopeDefinitions.map { ReviewedAnswerCatalog.digest($0.digestParts) }.sorted()
+            parts.append(contentsOf: scopes)
+            return ReviewedAnswerCatalog.digest(parts)
         }
 
         fileprivate init(sources: [Source], answers: [Answer], admissionIssues: [String],
