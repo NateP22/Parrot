@@ -29,9 +29,11 @@ enum ProfileTest {
         testEvidenceReviewTransport()
         testDocumentAnswerDelivery()
         testUrgentQuestionPreemption()
+        ProfilePolicyTests.run { check($0, $1) }
         testSnapshotPersistence()
         testLenientKBDecode()
         ReviewedAnswerTests.run { check($0, $1) }
+        ReviewedScopeTests.run { check($0, $1) }
         ReviewedTransportTests.runSync { check($0, $1) }
         testStableHash()
         testNearDuplicate()

@@ -159,7 +159,9 @@ extension Redactor {
             copy.reviewedSelectionEntries = catalog.selectionEntries(for: candidates).map { entry in
                 ReviewedAnswerCatalog.SelectionEntry(id: entry.id, reply: redact(entry.reply),
                     applicability: redact(entry.applicability),
-                    excludedScopes: entry.excludedScopes.map { redact($0) })
+                    excludedScopes: entry.excludedScopes.map { redact($0) },
+                    scopeKey: redact(entry.scopeKey), scopeCategory: entry.scopeCategory,
+                    sourceAuthority: entry.sourceAuthority, supportedForms: entry.supportedForms)
             }
         }
         return copy

@@ -4,7 +4,7 @@ import CryptoKit
 /// Whole, source-reviewed replies. The live model may select an ID, never
 /// author or combine their factual wording. Source review is not app acceptance.
 struct ReviewedAnswerCatalog: Codable {
-    static let fileFormat = "parrot-reviewed-answers-v1"
+    static let fileFormat = "parrot-reviewed-answers-v2"
     /// Public verification material only. The local signing key is never
     /// bundled with the app, source repository, CI or knowledge library.
     static let verificationKeyBase64 = "4EJ5i69h3df2DchnTdF/eK7ub9B1yP7sj2GOqxFzqVo="
@@ -18,6 +18,7 @@ struct ReviewedAnswerCatalog: Codable {
         let id: String
         let name: String
         let provider: String
+        let authority: ReviewedSourceAuthority
         let revision: String
         let productVersion: String?
         let urls: [String]
@@ -25,7 +26,7 @@ struct ReviewedAnswerCatalog: Codable {
         let text: String
 
         var identityDigest: String {
-            ReviewedAnswerCatalog.digest(["source-v1", name, provider, revision,
+            ReviewedAnswerCatalog.digest(["source-v2", name, provider, authority.rawValue, revision,
                 productVersion ?? "", sha256, String(urls.count)] + urls)
         }
     }
@@ -52,6 +53,10 @@ struct ReviewedAnswerCatalog: Codable {
         let reply: String
         let applicability: String
         let excludedScopes: [String]
+        let scopeKey: String
+        let scopeCategory: String
+        let sourceAuthority: String
+        let supportedForms: [String]
     }
 
     struct Answer: Codable {
@@ -66,14 +71,18 @@ struct ReviewedAnswerCatalog: Codable {
         /// Unsupported until an app-owned client-state verifier exists. Conditions
         /// needed by admitted replies must be stated in their reviewed wording.
         let requiredClientContext: [String]
+        let scope: ReviewedQuestionScope
+        let supportedForms: [ReviewedQuestionForm]
         let evidence: [Evidence]
         let review: Review
 
         var contentDigest: String {
-            var parts = ["answer-v1", kind.rawValue, title, reply, applicability,
+            var parts = ["answer-v2", kind.rawValue, title, reply, applicability,
                 String(excludedScopes.count)] + excludedScopes
             parts += [String(searchTerms.count)] + searchTerms
             parts += [String(requiredClientContext.count)] + requiredClientContext
+            parts += scope.digestParts
+            parts += [String(supportedForms.count)] + supportedForms.map(\.rawValue)
             parts += [String(evidence.count)]
             for item in evidence {
                 parts += [item.sourceID, String(item.startUTF8), String(item.endUTF8), item.quote]
@@ -86,20 +95,54 @@ struct ReviewedAnswerCatalog: Codable {
         let sources: [Source]
         let answers: [Answer]
         let admissionIssues: [String]
+        /// Retain signed routing definitions even when their source is out of play.
+        /// A missing second topic must not turn a compound question into a partial answer.
+        private let scopeDefinitions: [ReviewedQuestionScope]
 
         var revisionToken: String {
-            ReviewedAnswerCatalog.digest(["snapshot-v1", String(sources.count)]
-                + sources.map(\.id).sorted() + [String(answers.count)] + answers.map(\.id).sorted())
+            ReviewedAnswerCatalog.digest(["snapshot-v2", String(sources.count)]
+                + sources.map(\.id).sorted() + [String(answers.count)] + answers.map(\.id).sorted()
+                + [String(scopeDefinitions.count)] + scopeDefinitions.map { ReviewedAnswerCatalog.digest($0.digestParts) }.sorted())
         }
 
-        fileprivate init(sources: [Source], answers: [Answer], admissionIssues: [String]) {
+        fileprivate init(sources: [Source], answers: [Answer], admissionIssues: [String],
+                         scopeDefinitions: [ReviewedQuestionScope] = []) {
             self.sources = sources
             self.answers = answers
             self.admissionIssues = admissionIssues
+            self.scopeDefinitions = scopeDefinitions
         }
 
         static func unavailable(_ reason: String) -> Snapshot {
             Snapshot(sources: [], answers: [], admissionIssues: [reason])
+        }
+
+        func questionRequirement(_ question: String) -> ReviewedQuestionRequirement {
+            guard !question.isEmpty, question.count <= 4000,
+                  !ReviewedQuestionScope.containsQuotedQuestion(question) else { return .ambiguous }
+            let forms = ReviewedQuestionForm.forms(in: question)
+            guard !forms.isEmpty else { return .ambiguous }
+            let matches = scopeDefinitions.filter { $0.matches(question) }
+            guard matches.count == 1, let scope = matches.first else { return .ambiguous }
+            return .matched(key: scope.key, category: scope.category, forms: forms)
+        }
+
+        /// Recomputed from the canonical snapshot, not a caller's candidate array
+        /// or a scope label returned by the model.
+        func permitsAnswer(for answerID: String, question: String) -> Bool {
+            guard let answer = answers.first(where: { $0.id == answerID }) else { return false }
+            return permits(answer, requirement: questionRequirement(question))
+                && permitsVersions(answer, requested: Self.versionNumbers(question))
+        }
+
+        private func permits(_ answer: Answer, requirement: ReviewedQuestionRequirement) -> Bool {
+            guard case .matched(let key, let category, let forms) = requirement,
+                  answer.scope.key == key, answer.scope.category == category,
+                  forms.isSubset(of: Set(answer.supportedForms)) else { return false }
+            let used = Set(answer.evidence.map(\.sourceID))
+            let evidenceSources = sources.filter { used.contains($0.id) }
+            return evidenceSources.count == used.count && !used.isEmpty
+                && evidenceSources.allSatisfy { $0.authority == category.authority }
         }
 
         /// Retrieval narrows the choice, never certifies its relevance. The live
@@ -108,10 +151,12 @@ struct ReviewedAnswerCatalog: Codable {
             let asked = ReviewedAnswerCatalog.tokens(question)
             guard !asked.isEmpty, limit > 0 else { return [] }
             let requestedVersions = Self.versionNumbers(question)
+            let requirement = questionRequirement(question)
             let sourceNames = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0.name) })
             var ranked: [(answer: Answer, score: Double)] = []
             for answer in answers {
-                guard permitsVersions(answer, requested: requestedVersions) else { continue }
+                guard permits(answer, requirement: requirement),
+                      permitsVersions(answer, requested: requestedVersions) else { continue }
                 let words = ReviewedAnswerCatalog.tokens(([answer.title, answer.reply,
                     answer.applicability] + answer.searchTerms).joined(separator: " "))
                 let overlap = Double(asked.intersection(words).count)
@@ -149,7 +194,10 @@ struct ReviewedAnswerCatalog: Codable {
 
         func selectionEntries(for candidates: [Answer]) -> [SelectionEntry] {
             candidates.map { SelectionEntry(id: $0.id, reply: $0.reply,
-                applicability: $0.applicability, excludedScopes: $0.excludedScopes) }
+                applicability: $0.applicability, excludedScopes: $0.excludedScopes,
+                scopeKey: $0.scope.key, scopeCategory: $0.scope.category.rawValue,
+                sourceAuthority: $0.scope.category.authority.rawValue,
+                supportedForms: $0.supportedForms.map(\.rawValue)) }
         }
 
         func references(for answerID: String) -> [KBReference] {
@@ -175,7 +223,7 @@ struct ReviewedAnswerCatalog: Codable {
         guard data.count <= 16 * 1024 * 1024 else { throw ValidationError.invalid("file is too large") }
         struct Envelope: Decodable { let format: String; let payload: String; let signature: String }
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data),
-              envelope.format == "parrot-reviewed-answers-signed-v1",
+              envelope.format == "parrot-reviewed-answers-signed-v2",
               let payload = Data(base64Encoded: envelope.payload), payload.count <= 12 * 1024 * 1024,
               let signature = Data(base64Encoded: envelope.signature),
               let publicBytes = Data(base64Encoded: verificationKeyBase64),
@@ -207,7 +255,16 @@ struct ReviewedAnswerCatalog: Codable {
             try require(source.id == "s-" + source.identityDigest, "source identity changed")
         }
         let byID = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
+        var scopes: [String: ReviewedQuestionScope] = [:]
         for answer in answers {
+            try require(answer.scope.isValid, "invalid reviewed question scope")
+            try require(!answer.supportedForms.isEmpty
+                && Set(answer.supportedForms).count == answer.supportedForms.count, "invalid supported question forms")
+            try require(!answer.supportedForms.contains(.clientState)
+                || answer.kind == .clarification || answer.kind == .uncertainty, "unverified client-state scope for a factual reply")
+            if let previous = scopes[answer.scope.key] {
+                try require(previous == answer.scope, "conflicting scope definitions")
+            } else { scopes[answer.scope.key] = answer.scope }
             let digest = answer.contentDigest
             try require(answer.id == "a-" + digest.prefix(24), "answer identity changed")
             try require(answer.review.verdict == "PASS_SOURCE_ONLY"
@@ -227,6 +284,7 @@ struct ReviewedAnswerCatalog: Codable {
                 guard let source = byID[evidence.sourceID] else {
                     throw ValidationError.invalid("unknown evidence source")
                 }
+                try require(source.authority == answer.scope.category.authority, "scope authority mismatch")
                 let bytes = Data(source.text.utf8)
                 try require(evidence.startUTF8 >= 0 && evidence.endUTF8 > evidence.startUTF8
                     && evidence.endUTF8 <= bytes.count, "invalid evidence range")
@@ -263,7 +321,9 @@ struct ReviewedAnswerCatalog: Codable {
         }
         let sourceIDs = Set(acceptedSources.map(\.id))
         let eligible = answers.filter { $0.evidence.allSatisfy { sourceIDs.contains($0.sourceID) } }
-        return Snapshot(sources: acceptedSources, answers: eligible, admissionIssues: issues)
+        let definitions = Dictionary(grouping: answers.map(\.scope), by: \.key)
+            .values.compactMap(\.first).sorted { $0.key < $1.key }
+        return Snapshot(sources: acceptedSources, answers: eligible, admissionIssues: issues, scopeDefinitions: definitions)
     }
 
     static func sha256(_ data: Data) -> String {

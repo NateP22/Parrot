@@ -41,13 +41,13 @@ final class JevDocMatcher {
 
     /// `apiKey` overrides the Keychain (dev harnesses read the key through the
     /// `security` CLI so the unsigned binary never hits a consent dialog).
-    init(apiKey: String? = nil) {
+    init(apiKey: String? = nil, session: URLSession? = nil) {
         apiKeyOverride = apiKey
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = Self.budget
         config.timeoutIntervalForResource = Self.budget + 0.3
         config.httpMaximumConnectionsPerHost = 2
-        session = URLSession(configuration: config)
+        self.session = session ?? URLSession(configuration: config)
     }
 
     private var apiKey: String? {

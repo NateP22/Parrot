@@ -371,6 +371,25 @@ final class CallAnalysisEngine {
         }
     }
 
+    private func requestIsCurrent(_ request: AnalysisRequest, profileID: UUID?) -> Bool {
+        guard activeProfile?.id == profileID,
+              (activeProfile?.allowGeneralKnowledge ?? true) == request.allowGeneralKnowledge else { return false }
+        return request.allowGeneralKnowledge ||
+            knowledgeBase?.reviewedAnswerSnapshot(for: profileID)?.revisionToken == request.reviewedCatalog?.revisionToken
+    }
+
+    private func requeueAnalysis(previousAnalyzedCount: Int, previousPendingSince: Date?) {
+        clearPendingExcerpts()
+        lastAnalyzedCount = previousAnalyzedCount
+        oldestPendingSince = previousPendingSince
+        analysisTask = nil
+        analysisHasQuestion = nil
+        status = .listening
+        pendingUrgent = true
+        rerunRequested = false
+        triggerAnalysis()
+    }
+
     private func runAnalysis() async {
         // A cancelled run must touch nothing: stop() may already have been
         // followed by a new start(), so isActive alone can't distinguish "this
@@ -382,6 +401,10 @@ final class CallAnalysisEngine {
         }
 
         let profile = activeProfile
+        // CallProfile is a mutable reference. Freeze policy values before the
+        // first await so a Settings edit cannot change only half a request.
+        let requestedProfileID = profile?.id
+        let requestedGeneralKnowledge = profile?.allowGeneralKnowledge ?? true
         // An empty kind list can't produce a valid schema ("enum": [] is a 400
         // on every call) — surface it once instead of erroring forever.
         guard !(profile?.kinds ?? []).isEmpty else {
@@ -430,13 +453,13 @@ final class CallAnalysisEngine {
         var references: [KBReference] = []
         if let kb = knowledgeBase {
             if let question = currentQuestion {
-                let strict = profile?.allowGeneralKnowledge == false
-                references = await kb.search(query: question, profileID: profile?.id,
+                let strict = !requestedGeneralKnowledge
+                references = await kb.search(query: question, profileID: requestedProfileID,
                     topK: strict ? 12 : 2, contextNeighbors: strict ? 1 : 0)
                 guard isActive, !Task.isCancelled else { return }
             }
             let windowQuery = recent.map(\.text).joined(separator: " ")
-            let windowReferences = await kb.search(query: windowQuery, profileID: profile?.id)
+            let windowReferences = await kb.search(query: windowQuery, profileID: requestedProfileID)
             guard isActive, !Task.isCancelled else { return }
             for reference in windowReferences
             where !references.contains(where: {
@@ -460,8 +483,8 @@ final class CallAnalysisEngine {
             references: references,
             instructions: profile?.tone ?? "",
             callBrief: callBrief,
-            allowGeneralKnowledge: profile?.allowGeneralKnowledge ?? true,
-            knownDocumentNames: knowledgeBase?.documentsInPlay(for: profile?.id) ?? [],
+            allowGeneralKnowledge: requestedGeneralKnowledge,
+            knownDocumentNames: knowledgeBase?.documentsInPlay(for: requestedProfileID) ?? [],
             persona: profile?.persona ?? "",
             counterpart: profile?.counterpart ?? "the other person",
             kinds: profile?.kinds ?? [],
@@ -470,8 +493,8 @@ final class CallAnalysisEngine {
             previousCallContext: previousCallContext,
             previousCallIsPrivate: previousCallIsPrivate,
             forceLocal: forceLocal,
-            reviewedCatalog: profile?.allowGeneralKnowledge == false
-                ? knowledgeBase?.reviewedAnswerSnapshot(for: profile?.id) : nil
+            reviewedCatalog: !requestedGeneralKnowledge
+                ? knowledgeBase?.reviewedAnswerSnapshot(for: requestedProfileID) : nil
         )
 
         if currentQuestion != nil && !request.allowGeneralKnowledge {
@@ -484,25 +507,17 @@ final class CallAnalysisEngine {
 
         do {
             guard isActive, !Task.isCancelled else { return }
+            guard requestIsCurrent(request, profileID: requestedProfileID) else {
+                requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)
+                return
+            }
             let result = try await provider.analyze(request)
             guard isActive, !Task.isCancelled else {
                 if !Task.isCancelled { analysisTask = nil }
                 return
             }
-            if !request.allowGeneralKnowledge,
-               knowledgeBase?.reviewedAnswerSnapshot(for: profile?.id)?.revisionToken
-                    != request.reviewedCatalog?.revisionToken {
-                // Scope, text or library changed while the selector was in flight.
-                // The old snapshot no longer authorizes inserting this reply.
-                clearPendingExcerpts()
-                lastAnalyzedCount = previousAnalyzedCount
-                oldestPendingSince = previousPendingSince
-                analysisTask = nil
-                analysisHasQuestion = nil
-                status = .listening
-                pendingUrgent = true
-                rerunRequested = false
-                triggerAnalysis()
+            guard requestIsCurrent(request, profileID: requestedProfileID) else {
+                requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)
                 return
             }
             // Retrieval alone is not an answer. Remove every interim status
@@ -515,16 +530,16 @@ final class CallAnalysisEngine {
                let pct = userTalkPercent, (profile?.gauges.contains { $0.key == "my_dominance" } ?? false) {
                 merged["my_dominance"] = pct
             }
-            sentiment = merged
-            sentimentRead = result.read
-            coachLine = result.coach
-            // The model says these already-shown items were since dealt with in
-            // the conversation — clear them so stale alerts don't pile up (and
-            // so the post-call report shows them Handled, not Unresolved).
+            // Plan resolution without mutating visible/persisted state. Jev
+            // below can suspend again, allowing the profile or scope to change.
+            // Preserve the original first-unhandled-card behavior for duplicates.
+            var resolvedIDs = Set<UUID>()
             for title in result.resolved {
                 let lowered = title.lowercased()
-                if let idx = insights.firstIndex(where: { $0.title.lowercased() == lowered && !$0.isHandled }) {
-                    insights[idx].isHandled = true
+                if let card = insights.first(where: {
+                    $0.title.lowercased() == lowered && !$0.isHandled && !resolvedIDs.contains($0.id)
+                }) {
+                    resolvedIDs.insert(card.id)
                 }
             }
             let existingTitles = Set(insights.map { $0.title.lowercased() })
@@ -532,7 +547,9 @@ final class CallAnalysisEngine {
             // still open. A real 11-min call produced TEN variants of the same
             // question ("…unknown", "…still unanswered", "…still live") —
             // prompt instructions alone don't stop it, so enforce it here.
-            let openInsights = insights.filter { !$0.isHandled && $0.kindKey != Insight.docExcerptKind }
+            let openInsights = insights.filter {
+                !$0.isHandled && !resolvedIDs.contains($0.id) && $0.kindKey != Insight.docExcerptKind
+            }
             let candidates = result.insights
                 // The model's own dedup verdict: a non-empty "supersedes" means
                 // it recognized the draft as an already-shown issue (any wording,
@@ -584,6 +601,19 @@ final class CallAnalysisEngine {
                     admitted = zip(candidates, keep).filter { $0.0.answerKey != nil || $0.1 }.map { $0.0 }
                 }
             }
+            // Also covers a thrown/cancelled matcher request: try? above must
+            // not allow its failure path to bypass the delivery boundary.
+            guard isActive, !Task.isCancelled else { return }
+            guard requestIsCurrent(request, profileID: requestedProfileID) else {
+                requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)
+                return
+            }
+            sentiment = merged
+            sentimentRead = result.read
+            coachLine = result.coach
+            for index in insights.indices where resolvedIDs.contains(insights[index].id) {
+                insights[index].isHandled = true
+            }
             let unique = admitted.compactMap { draft -> Insight? in
                 if let identity = Self.documentAnswerIdentity(draft),
                    !seenDocumentAnswers.insert(identity).inserted { return nil }
@@ -603,6 +633,10 @@ final class CallAnalysisEngine {
             status = .listening
         } catch let error as AnalysisError {
             if isActive, !Task.isCancelled {
+                guard requestIsCurrent(request, profileID: requestedProfileID) else {
+                    requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)
+                    return
+                }
                 clearPendingExcerpts()
                 lastAnalyzedCount = previousAnalyzedCount
                 oldestPendingSince = previousPendingSince
@@ -614,6 +648,10 @@ final class CallAnalysisEngine {
             }
         } catch {
             if isActive, !Task.isCancelled {
+                guard requestIsCurrent(request, profileID: requestedProfileID) else {
+                    requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)
+                    return
+                }
                 clearPendingExcerpts()
                 lastAnalyzedCount = previousAnalyzedCount
                 oldestPendingSince = previousPendingSince

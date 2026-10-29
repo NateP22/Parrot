@@ -29,6 +29,11 @@ enum CatalogSigner {
                 "Use init-key KEY or sign KEY PAYLOAD APPROVED_PAYLOAD_SHA256 OUTPUT"])
         }
         let payload = try Data(contentsOf: URL(fileURLWithPath: args[2]))
+        guard let object = try JSONSerialization.jsonObject(with: payload) as? [String: Any],
+              object["format"] as? String == "parrot-reviewed-answers-v2" else {
+            throw NSError(domain: "CatalogSigner", code: 4, userInfo: [NSLocalizedDescriptionKey:
+                "Expected a reviewed v2 payload; no legacy scope inference is allowed"])
+        }
         let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
         guard digest == args[3], digest.count == 64 else {
             throw NSError(domain: "CatalogSigner", code: 2, userInfo: [NSLocalizedDescriptionKey:
@@ -36,7 +41,7 @@ enum CatalogSigner {
         }
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation:
             Data(contentsOf: URL(fileURLWithPath: args[1])))
-        let envelope: [String: Any] = ["format": "parrot-reviewed-answers-signed-v1",
+        let envelope: [String: Any] = ["format": "parrot-reviewed-answers-signed-v2",
             "payload": payload.base64EncodedString(),
             "signature": try key.signature(for: payload).base64EncodedString()]
         let data = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
