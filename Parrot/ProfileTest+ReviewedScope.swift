@@ -9,6 +9,28 @@ enum ReviewedScopeTests {
         return try JSONSerialization.data(withJSONObject: ["content":[["type":"text","text":text]], "stop_reason":"end_turn"])
     }
     static func run(_ check: (String, Bool) -> Void) {
+        check("scope: command name Selected does not imply selected client state",
+              ReviewedQuestionForm.forms(in:"Where does Import Selected put a sample?") == [.location])
+        check("scope: command-name definition stays a definition",
+              ReviewedQuestionForm.forms(in:"What does Import Selected do?") == [.definition])
+        check("scope: command name cannot hide a separate selected-state clause",
+              ReviewedQuestionForm.forms(in:"What does Import Selected do and which images are currently selected?") == [.definition, .clientState])
+        check("scope: temporal command question still needs client state",
+              ReviewedQuestionForm.forms(in:"Where does Import Selected put items now?") == [.clientState])
+        check("scope: selected state outside the command name remains guarded",
+              ReviewedQuestionForm.forms(in:"Which items are selected after Import Selected?") == [.clientState])
+        check("scope: command label cannot hide an enabled-state question",
+              ReviewedQuestionForm.forms(in:"Where is Import Selected enabled?") == [.clientState])
+        check("scope: command label cannot hide an active-state question",
+              ReviewedQuestionForm.forms(in:"Which Import Selected action is active?") == [.clientState])
+        check("scope: toolbar location does not become an on-off state",
+              ReviewedQuestionForm.forms(in:"Where is Import Selected on the toolbar?") == [.location])
+        check("scope: an enabled feature can still be a general definition",
+              ReviewedQuestionForm.forms(in:"What does enabled Sample Width do?") == [.definition])
+        check("scope: a general enabled condition does not assert client state",
+              ReviewedQuestionForm.forms(in:"What happens when Sample Width is enabled?") == [.definition, .condition])
+        check("scope: an enabled layer can have a documented run condition",
+              ReviewedQuestionForm.forms(in:"When does an enabled sample layer run?") == [.condition])
         do {
             let catalog = try ReviewedAnswerCatalog.decode(fixtureData)
             let docs = catalog.sources.map { KBDocument(name:$0.name, chunkCount:1, addedAt:.now, contentSHA256:$0.sha256) }

@@ -60,8 +60,12 @@ enum ReviewedQuestionForm: String, Codable, Hashable {
     /// Published help describes general behavior, not a client's actual file.
     /// These conservative exclusions are routing gates, not a semantic proof.
     private static func requestsClientState(_ clause: String) -> Bool {
+        // "Selected" is part of this command label, not evidence about the
+        // user's current selection. Other state words and clauses still count.
+        let stateClause = clause.replacingOccurrences(of: "\\bimport selected\\b",
+            with: "import command", options: .regularExpression)
         func matches(_ pattern: String) -> Bool {
-            clause.range(of: pattern, options: .regularExpression) != nil
+            stateClause.range(of: pattern, options: .regularExpression) != nil
         }
         // Instructions can mention "my document" without asserting its state.
         if ["how do i ", "how do we ", "how can i ", "how can we ", "how to "]
@@ -78,6 +82,19 @@ enum ReviewedQuestionForm: String, Codable, Hashable {
            matches("\\b(?:enabled|disabled|active|inactive|on|off|running|configured|selected|connected|installed)\\b") { return true }
         if matches("^(?:how|what|which|where|who|whom|whose|why|when)\\b"),
            matches("\\b(?:did|has|have|had|was|were|now|currently|already|last|latest|selected|assigned|configured)\\b") { return true }
+        // A main-clause state predicate asks about actual availability. An
+        // adjective in "what does an enabled control do" or a general "when"
+        // condition describes behavior and must keep its question form.
+        let words = stateClause.split(separator: " ").map(String.init)
+        let statePredicates: Set<String> = ["enabled", "disabled", "active", "inactive",
+            "running", "connected", "installed"]
+        let behaviorWords: Set<String> = ["does", "do", "happens", "can", "could", "may",
+            "might", "will", "would", "should", "if", "when", "while"]
+        if matches("^(?:what|which|where|who|whom|whose|why)\\b"),
+           let copula = words.firstIndex(where: { $0 == "is" || $0 == "are" }),
+           !words[..<copula].contains(where: { behaviorWords.contains($0) }),
+           words.dropFirst(copula + 1).contains(where: { statePredicates.contains($0) })
+            || matches("\\b(?:turned|switched) (?:on|off)\\b") { return true }
         return false
     }
 }
