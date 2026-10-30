@@ -136,6 +136,157 @@ enum ProfilePolicyTests {
         unchangedEngine.stop()
         testDedupAwait(check)
         testProviderError(check)
+        testExcerptRouting(check)
+        testExcerptDelivery(check)
+    }
+
+    /// Intercepts only synthetic matcher requests; no keychain or network.
+    private final class ExcerptProtocol: URLProtocol, @unchecked Sendable {
+        private static let lock = NSLock()
+        private static var requests = 0
+        private static var shouldGate = false
+        private static var pending: ExcerptProtocol?
+        private static var token = ""
+        static var requestCount: Int { lock.withLock { requests } }
+        static var isWaiting: Bool { lock.withLock { pending != nil } }
+        static func reset(gated: Bool) -> String {
+            release()
+            return lock.withLock {
+                requests = 0; shouldGate = gated; token = UUID().uuidString
+                return token
+            }
+        }
+        override class func canInit(with request: URLRequest) -> Bool { true }
+        override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+        override func startLoading() {
+            var body = request.httpBody ?? Data()
+            if body.isEmpty, let stream = request.httpBodyStream {
+                stream.open(); defer { stream.close() }
+                var buffer = [UInt8](repeating: 0, count: 4096)
+                while stream.hasBytesAvailable {
+                    let count = stream.read(&buffer, maxLength: buffer.count)
+                    if count <= 0 { break }
+                    body.append(contentsOf: buffer.prefix(count))
+                }
+            }
+            let json = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+            let state = json?["state"] as? [String: Any]
+            let gate = Self.lock.withLock {
+                guard request.value(forHTTPHeaderField: "X-Parrot-Fixture") == Self.token else { return false }
+                Self.requests += 1
+                let gate = Self.shouldGate && (state?["asked"] as? String) != "ready"
+                if gate { Self.pending = self }
+                return gate
+            }
+            if !gate { respond() }
+        }
+        override func stopLoading() {
+            Self.lock.withLock { if Self.pending === self { Self.pending = nil } }
+        }
+        private func respond() {
+            let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: "HTTP/1.1",
+                                           headerFields: ["Content-Type": "application/json"])!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: Data(#"{"answers":{"c0":{"noul":0.99}}}"#.utf8))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+        static func release() {
+            let value = lock.withLock { let value = pending; pending = nil; return value }
+            value?.respond()
+        }
+    }
+
+    @MainActor
+    private static func testExcerptRouting(_ check: (String, Bool) -> Void) {
+        for mode in ["strict profile", "required catalog", "permissive control"] {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.protocolClasses = [ExcerptProtocol.self]
+            configuration.httpAdditionalHeaders = ["X-Parrot-Fixture": ExcerptProtocol.reset(gated: false)]
+            let session = URLSession(configuration: configuration)
+            let ai = GatedProvider()
+            let engine = CallAnalysisEngine(provider: ai)
+            let current = profile("Excerpt routing fixture")
+            current.allowGeneralKnowledge = mode != "strict profile"
+            let kb = KnowledgeBaseService(persistent: false)
+            kb.seedForSnapshot(documents: [KBDocument(name: "Fictional export.md", chunkCount: 0, addedAt: .now)])
+            if mode == "required catalog" {
+                do { try kb.installReviewedCatalog(ReviewedAnswerTests.fixtureData) }
+                catch { check("excerpt routing: signed synthetic fixture installs", false) }
+            }
+            engine.knowledgeBase = kb
+            engine.docMatcher = JevDocMatcher(apiKey: "synthetic-test-key", session: session)
+            engine.start(profile: current)
+            engine.ingest(text: "Which fictional export option preserves hyperlinks?", at: 1, source: .them)
+            let deadline = Date.now + 2
+            while Date.now < deadline && (ai.requestedModes.isEmpty ||
+                    (mode == "permissive control" && ExcerptProtocol.requestCount == 0)) {
+                RunLoop.main.run(until: .now + 0.01)
+            }
+            check("excerpt routing: main provider reached gate: \(mode)", !ai.requestedModes.isEmpty)
+            let allowed = mode == "permissive control"
+            check("excerpt routing: attempts honor mode: \(mode)", engine.fastPathStats.attempts == (allowed ? 1 : 0))
+            check("excerpt routing: outbound requests honor mode: \(mode)", allowed ? ExcerptProtocol.requestCount > 0 : ExcerptProtocol.requestCount == 0)
+            engine.stop()
+            ai.release()
+            session.invalidateAndCancel()
+        }
+    }
+
+    @MainActor
+    private static func testExcerptDelivery(_ check: (String, Bool) -> Void) {
+        // Use the real KB decoder/search and a retrievable fictional chunk;
+        // document-only snapshot seeds cannot exercise post-score delivery.
+        struct FixtureIndex: Encodable {
+            let version = 2
+            let documents: [KBDocument]
+            let folders: [KBFolder] = []
+            let chunks: [KBChunk]
+        }
+        for change in ["unchanged control", "strict profile", "required catalog", "disabled source"] {
+            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("parrot-excerpt-" + UUID().uuidString)
+            do {
+                try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: folder) }
+                let document = KBDocument(name: "Fictional export.md", chunkCount: 1, addedAt: .now)
+                let chunk = KBChunk(documentName: document.name, languageRaw: "zxx",
+                    text: "Fictional export: choose Linksafe to preserve hyperlinks.", embedding: [], space: "synthetic-lexical-only")
+                let index = folder.appendingPathComponent("index.json")
+                try JSONEncoder().encode(FixtureIndex(documents: [document], chunks: [chunk])).write(to: index)
+                let kb = KnowledgeBaseService(storageURL: index)
+                let configuration = URLSessionConfiguration.ephemeral
+                configuration.protocolClasses = [ExcerptProtocol.self]
+                configuration.httpAdditionalHeaders = ["X-Parrot-Fixture": ExcerptProtocol.reset(gated: true)]
+                let session = URLSession(configuration: configuration)
+                let ai = GatedProvider()
+                let engine = CallAnalysisEngine(provider: ai)
+                defer { engine.stop(); ai.release(); ExcerptProtocol.release(); session.invalidateAndCancel() }
+                let current = profile("Excerpt delivery fixture")
+                engine.knowledgeBase = kb
+                engine.docMatcher = JevDocMatcher(apiKey: "synthetic-test-key", session: session)
+                var publishedExcerpts = 0
+                engine.onInsightInserted = { if $0.kindKey == Insight.docExcerptKind { publishedExcerpts += 1 } }
+                engine.start(profile: current)
+                engine.ingest(text: "Which fictional export option preserves hyperlinks?", at: 1, source: .them)
+                let deadline = Date.now + 3
+                while !ExcerptProtocol.isWaiting && Date.now < deadline { RunLoop.main.run(until: .now + 0.01) }
+                check("excerpt delivery: actual search reaches gated score: \(change)", ExcerptProtocol.isWaiting)
+                switch change {
+                case "strict profile": current.allowGeneralKnowledge = false
+                case "required catalog": try kb.installReviewedCatalog(ReviewedAnswerTests.fixtureData)
+                case "disabled source": kb.setScope(.off, for: kb.documents[0])
+                default: break
+                }
+                ExcerptProtocol.release()
+                let deliveryDeadline = Date.now + 1
+                while publishedExcerpts == 0 && Date.now < deliveryDeadline { RunLoop.main.run(until: .now + 0.01) }
+                let expected = change == "unchanged control" ? 1 : 0
+                check("excerpt delivery: publications honor current policy: \(change)", publishedExcerpts == expected)
+                check("excerpt delivery: cards honor current policy: \(change)", engine.insights.filter { $0.kindKey == Insight.docExcerptKind }.count == expected)
+                check("excerpt delivery: hits honor current policy: \(change)", engine.fastPathStats.hits == expected)
+            } catch {
+                check("excerpt delivery: isolated fixture completes: \(change)", false)
+            }
+        }
     }
 
     @MainActor
