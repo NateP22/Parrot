@@ -1420,8 +1420,18 @@ enum APIKeyStore {
     static let isSessionOnly = Bundle.main.object(forInfoDictionaryKey: "ParrotSessionOnlyCredentials") as? Bool ?? false
     // A development bundle can isolate every credential operation from the
     // installed app's ACL. Never fall back to, or migrate from, that service.
-    private static let service = Bundle.main.object(forInfoDictionaryKey: "ParrotKeychainService") as? String
-        ?? "com.uygar.parrot"
+    private static let service: String? = {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
+        if let configured = Bundle.main.object(forInfoDictionaryKey: "ParrotKeychainService") as? String {
+            // A malformed QA package must fail closed, including when its
+            // override accidentally points at the installed production app.
+            guard !configured.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  configured != "com.uygar.parrot" || bundleID == "com.uygar.parrot",
+                  configured == bundleID || configured.hasPrefix(bundleID + ".") else { return nil }
+            return configured
+        }
+        return bundleID == "com.uygar.parrot" ? bundleID : nil
+    }()
 
     /// Keys by account, nil value = unavailable for this session. A live call asked
     /// `isConfigured` on every transcript segment: ~280 main-thread Keychain
@@ -1439,6 +1449,7 @@ enum APIKeyStore {
             cache.withLock { _ = $0.updateValue(key, forKey: account) }
             return true
         }
+        guard let service else { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -1475,6 +1486,7 @@ enum APIKeyStore {
         // Diagnostic bundles opt into memory-only credentials: even looking
         // for a missing key in a locked legacy keychain can display a prompt.
         if isSessionOnly { return nil }
+        guard let service else { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -1499,6 +1511,7 @@ enum APIKeyStore {
             cache.withLock { _ = $0.updateValue(nil, forKey: account) }
             return
         }
+        guard let service else { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

@@ -38,6 +38,11 @@ jobs:
           key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved') }}
           restore-keys: spm-${{ runner.os }}-
 
+      - name: Isolated credential and QA packaging regressions
+        run: |
+          python3 scripts/test-keychain-store.py
+          python3 scripts/test-qa-bundle-policy.py
+
       - name: Build (debug)
         run: swift build -c debug --force-resolved-versions
 

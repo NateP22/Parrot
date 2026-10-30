@@ -11,9 +11,11 @@ var reads: [String: Int] = [:]
 var deletions: [String: Int] = [:]
 var additions: [String: Int] = [:]
 var updates: [String: Int] = [:]
+var services: [String] = []
 
 func account(_ query: CFDictionary) -> String {
-    (query as NSDictionary)[kSecAttrAccount] as! String
+    services.append((query as NSDictionary)[kSecAttrService] as! String)
+    return (query as NSDictionary)[kSecAttrAccount] as! String
 }
 func SecItemCopyMatching(_ query: CFDictionary, _ output: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
     let name = account(query)
@@ -50,6 +52,31 @@ var failures = 0
 func check(_ name: String, _ condition: @autoclosure () -> Bool) {
     if condition() { print("PASS \(name)") }
     else { print("FAIL \(name)"); failures += 1 }
+}
+
+if CommandLine.arguments.contains("--invalid-service-tests") {
+    check("invalid QA metadata rejects save", !APIKeyStore.save("dummy-isolation", account: "isolated"))
+    check("invalid QA metadata cannot load", APIKeyStore.load(account: "isolated") == nil)
+    APIKeyStore.delete(account: "isolated")
+    check("invalid QA metadata makes zero Security calls", services.isEmpty)
+    print(failures == 0 ? "ALL INVALID SERVICE REGRESSIONS PASS" : "INVALID SERVICE REGRESSION FAILURES: \(failures)")
+    exit(failures == 0 ? 0 : 1)
+}
+
+if let modeIndex = CommandLine.arguments.firstIndex(of: "--persistence-phase"),
+   let path = ProcessInfo.processInfo.environment["PARROT_TEST_FAKE_STORE"] {
+    let url = URL(fileURLWithPath: path)
+    if let data = try? Data(contentsOf: url) { records = try! JSONDecoder().decode([String: Data].self, from: data) }
+    let phase = CommandLine.arguments[modeIndex + 1]
+    if phase == "write" {
+        check("persistent QA save succeeds", APIKeyStore.save("dummy-restart-only", account: "restart"))
+        try! JSONEncoder().encode(records).write(to: url)
+    } else {
+        check("fresh process reloads saved synthetic credential", APIKeyStore.load(account: "restart") == "dummy-restart-only")
+    }
+    let expected = Bundle.main.object(forInfoDictionaryKey: "ParrotKeychainService") as! String
+    check("restart phase touches only its own service", !services.isEmpty && services.allSatisfy { $0 == expected })
+    exit(failures == 0 ? 0 : 1)
 }
 
 if CommandLine.arguments.contains("--session-only-tests") {
@@ -97,6 +124,9 @@ check("failed delete preserves cached original", APIKeyStore.load(account: "dele
 
 blockedReads.removeValue(forKey: "denied")
 check("explicit successful save recovers blocked account", APIKeyStore.save("dummy-recovered", account: "denied") && APIKeyStore.load(account: "denied") == "dummy-recovered")
+
+let expectedService = Bundle.main.object(forInfoDictionaryKey: "ParrotKeychainService") as? String ?? "com.uygar.parrot"
+check("all Security operations stay in the configured service", !services.isEmpty && services.allSatisfy { $0 == expectedService })
 
 print(failures == 0 ? "ALL CREDENTIAL REGRESSIONS PASS" : "CREDENTIAL REGRESSION FAILURES: \(failures)")
 exit(failures == 0 ? 0 : 1)

@@ -5,6 +5,7 @@ mkdir -p build-evidence
 swift --version | tee build-evidence/toolchain.txt
 xcodebuild -version | tee -a build-evidence/toolchain.txt
 python3 scripts/test-keychain-store.py | tee build-evidence/credentials.log
+python3 scripts/test-qa-bundle-policy.py 2>&1 | tee build-evidence/qa-bundle-policy.log
 bash scripts/test-microphone-input.sh | tee build-evidence/microphone-format.log
 make build CONFIG=release SWIFT_BUILD_FLAGS="--force-resolved-versions --disable-keychain --disable-netrc"
 .build/release/Parrot --profile-test > build-evidence/profile-test.log 2>&1
@@ -19,16 +20,18 @@ import subprocess
 app = Path('dist/Parrot.app')
 info = app / 'Contents/Info.plist'
 p = plistlib.loads(info.read_bytes())
-# Ad-hoc code requirements change between builds. Give each frozen candidate
-# its own test identity so a stale grant for an older binary cannot masquerade
-# as permission for this one. Production's bundle, store and grant stay separate.
+# Keep one isolated QA container and credential service across relaunches.
+# Ad-hoc signing still changes its code requirement: this does NOT assert that
+# an update inherits Keychain access or macOS permissions. Verify those on the
+# installed candidate; never relax its requirement or the original app's ACL.
 commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
-test_id = 'com.uygar.parrot.sat54-' + commit[:12]
+test_id = 'com.uygar.parrot.sat54.qa'
 p['CFBundleIdentifier'] = test_id
-p['CFBundleName'] = 'Parrot SAT54 Test'
-p['CFBundleDisplayName'] = 'Parrot SAT54 Test'
-p['ParrotKeychainService'] = test_id + '.session-only'
-p['ParrotSessionOnlyCredentials'] = True
+p['CFBundleName'] = 'Parrot SAT54 QA'
+p['CFBundleDisplayName'] = 'Parrot SAT54 QA'
+p['ParrotSourceCommit'] = commit
+p['ParrotKeychainService'] = test_id
+p['ParrotSessionOnlyCredentials'] = False
 p['SUEnableAutomaticChecks'] = False
 p['SUAutomaticallyUpdate'] = False
 p.pop('SUFeedURL', None)
@@ -38,7 +41,8 @@ e = plistlib.loads(Path('Parrot/Parrot.entitlements').read_bytes())
 # Sparkle framework have no Team ID. Keep other hardened-runtime controls.
 e['com.apple.security.cs.disable-library-validation'] = True
 Path('build-evidence/test-entitlements.plist').write_bytes(plistlib.dumps(e))
-assert p['ParrotSessionOnlyCredentials'] and 'SUFeedURL' not in p
+assert not p['ParrotSessionOnlyCredentials'] and 'SUFeedURL' not in p
+assert p['ParrotKeychainService'] == p['CFBundleIdentifier']
 assert p['CFBundleIdentifier'] != 'com.uygar.parrot'
 Path('build-evidence/test-bundle-id.txt').write_text(test_id + '\n')
 Path('build-evidence/test-info.plist').write_bytes(info.read_bytes())
