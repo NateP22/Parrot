@@ -133,10 +133,13 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
     private let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
     private let session: URLSession
     private let keyProvider: () -> String?
+    private let reviewedResponseObserver: ((ReviewedSelectorObservation) -> Void)?
 
-    init(session: URLSession = .shared, keyProvider: @escaping () -> String? = { APIKeyStore.load() }) {
+    init(session: URLSession = .shared, keyProvider: @escaping () -> String? = { APIKeyStore.load() },
+         reviewedResponseObserver: ((ReviewedSelectorObservation) -> Void)? = nil) {
         self.session = session
         self.keyProvider = keyProvider
+        self.reviewedResponseObserver = reviewedResponseObserver
     }
 
     var isConfigured: Bool {

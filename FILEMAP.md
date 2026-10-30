@@ -67,6 +67,8 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/NativeAnswerFrameRecorder.swift` | 380 | Passive exact-own-window SCK screen-only movie, full callback metadata and sample/PTS readback; resource-gated, independent visible-text/occlusion review required |
 | `Parrot/ProfileTest+FrameTrace.swift` | 80 | Synthetic owner/clock/idle/retention/cap/epoch/geometry regressions; no screen recording or native timing proof |
 | `Parrot/ProfileTest+QASetup.swift` | 35 | Synthetic exact-QA launch admission, conflicting CLI and typed-flag regressions; no native readiness |
+| `Parrot/ReviewedSelectorObservation.swift` | 100 | Response-only QA classifier and per-invocation capture; rejects invalid/truncated/duplicate fields and stale/duplicate callbacks; never authorizes a reply |
+| `Parrot/ProfileTest+ReviewedSelectorEval.swift` | 110 | Fictional response/correlation/duplicate-key diagnostic regressions; no provider calls, key access or native answer proof |
 | `Parrot/QASetupSelfCheck.swift` | 55 | Bundled --qa-setup --qa-setup-self-check exercises actual disabled speech/diarization/Ollama/embedding owners; component-only, no keys/audio/store |
 | `Services/QASetupLaunch.swift` | 65 | Immutable exact-QA setup admission and shared recording/model refusal; normal meeting launch preserved, no readiness claim |
 | `Views/QASetupView.swift` | 25 | Existing real API-key/profile Settings in a labeled lightweight QA-only scene; no onboarding bypass persisted |

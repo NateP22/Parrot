@@ -25,6 +25,18 @@ final class ReviewedMockProtocol: URLProtocol {
     }
     override func stopLoading() {}
 }
+/// Test-only log; never stores raw response/header/key material.
+final class ReviewedObservationTestLog {
+    private let lock = NSLock()
+    private var events: [ReviewedSelectorObservation] = []
+    func record(_ value: ReviewedSelectorObservation) {
+        lock.lock(); defer { lock.unlock() }; events.append(value)
+    }
+    func clear() { lock.lock(); defer { lock.unlock() }; events = [] }
+    var values: [ReviewedSelectorObservation] {
+        lock.lock(); defer { lock.unlock() }; return events
+    }
+}
 enum ReviewedTransportTests {
     static var count=0,failed=0
     @MainActor
@@ -62,11 +74,14 @@ enum ReviewedTransportTests {
         cfg.protocolClasses=[ReviewedMockProtocol.self]
         let session=URLSession(configuration:cfg)
         defer { session.invalidateAndCancel() }
-        let provider=ClaudeAnalysisProvider(session:session,keyProvider:{"synthetic-placeholder"})
+        let observed = ReviewedObservationTestLog()
+        let provider=ClaudeAnalysisProvider(session:session,keyProvider:{"synthetic-placeholder"},
+            reviewedResponseObserver: { observed.record($0) })
         func run(_ object:[String:Any],stop:String="end_turn",code:Int=200,error:URLError?=nil,nilRequest req:AnalysisRequest?=nil) async throws->InsightDraft {
             ReviewedMockProtocol.reply=envelope(object,stop:stop)
             ReviewedMockProtocol.code=code;ReviewedMockProtocol.failure=error
             ReviewedMockProtocol.requests=[];ReviewedMockProtocol.bodies=[]
+            observed.clear()
             let r=try await provider.analyze(req ?? request)
             check("strict single result",r.insights.count==1 && r.coach==nil && r.read==nil && r.resolved.isEmpty && r.sentiment.isEmpty)
             return r.insights[0]
@@ -78,6 +93,8 @@ enum ReviewedTransportTests {
         check("original source resolved",good.source==source.name && good.evidenceReferences?.first?.text==answer.evidence[0].quote)
         check("question identity preserved",good.answerKey==request.currentQuestion)
         check("single selector request",ReviewedMockProtocol.requests.count==1)
+        check("selector observer receives exactly one actual known-unit selection",
+              observed.values.count == 1 && observed.values.first?.kind == .answer && observed.values.first?.unitID == answer.id)
         let sent=ReviewedMockProtocol.requests[0]
         let body=try JSONSerialization.jsonObject(with:ReviewedMockProtocol.bodies[0]) as! [String:Any]
         check("fixed Haiku model",body["model"] as? String=="claude-haiku-5-5")
@@ -99,17 +116,26 @@ enum ReviewedTransportTests {
             ("empty id",["mode":"answer","unit_id":""],"end_turn")] {
             let d=try await run(object,stop:stop)
             check(name+" neutral",d.reply==ClaudeAnalysisProvider.reviewedUncertaintyReply && d.source==nil && d.evidenceQuote==nil)
+            check("selector observer keeps parser-rejected "+name+" inconclusive",
+                  observed.values.count == 1 && observed.values.first?.kind == .invalid && observed.values.first?.unitID == nil)
         }
+        let semanticUncertain = try await run(["mode":"uncertain","unit_id":""])
+        check("selector observer distinguishes valid model uncertainty",
+              observed.values.count == 1 && observed.values.first?.kind == .uncertain && observed.values.first?.unitID == nil && semanticUncertain.source == nil)
         let rate=try await run(selected,code:429)
         check("no retry on 429",ReviewedMockProtocol.requests.count==1 && rate.source==nil)
+        check("selector observer never calls rate-limit fallback model uncertainty", observed.values.count == 1 && observed.values.first?.kind == .noResponse)
         let unavailable=try await run(selected,code:503)
         check("no retry on 503",ReviewedMockProtocol.requests.count==1 && unavailable.source==nil)
+        check("selector observer never calls unavailable fallback model uncertainty", observed.values.count == 1 && observed.values.first?.kind == .noResponse)
         let timeout=try await run(selected,error:URLError(.timedOut))
         check("timeout neutral",timeout.reply==ClaudeAnalysisProvider.reviewedUncertaintyReply)
+        check("selector observer never reuses prior uncertainty after timeout", observed.values.count == 1 && observed.values.first?.kind == .noResponse)
         var wrongNames=AnalysisRequest(transcript:request.transcript,currentQuestion:request.currentQuestion,knownInsightTitles:[],references:[],instructions:"",callBrief:"",allowGeneralKnowledge:false,knownDocumentNames:["other.md"],persona:"",counterpart:"",kinds:[],gauges:[])
         wrongNames.reviewedCatalog=snapshot
         let outOfScope=try await run(selected,nilRequest:wrongNames)
         check("missing document no network",ReviewedMockProtocol.requests.isEmpty && outOfScope.source==nil)
+        check("selector observer reports no response when no candidate can be sent", observed.values.count == 1 && observed.values.first?.kind == .noResponse)
         var unavailableRequest=request
         unavailableRequest.reviewedCatalog = .unavailable("invalid signed file")
         let noLibrary=try await run(selected,nilRequest:unavailableRequest)
@@ -158,10 +184,12 @@ enum ReviewedTransportTests {
         let factoryBody=ReviewedMockProtocol.bodies.first.map {String(decoding:$0,as:UTF8.self)} ?? ""
         check("factory redacts cloud question",!factoryBody.contains("private.person@example.invalid") && factoryBody.contains("[EMAIL_1]"))
         check("factory preserves approved reply/quote/key",factory.insights.first?.reply==answer.reply && factory.insights.first?.evidenceQuote==answer.evidence[0].quote && factory.insights.first?.answerKey==privateRequest.currentQuestion)
+        observed.clear()
         var localRequest=privateRequest;localRequest.forceLocal=true
         ReviewedMockProtocol.requests=[]
         let localResult=try await switching.analyze(localRequest)
         check("forced local never sends reviewed content",ReviewedMockProtocol.requests.isEmpty && localResult.insights.first?.source==nil)
+        check("selector observer stays empty when privacy bypasses Claude", observed.values.isEmpty)
         let scopedResult=try await CloudGate.$scopeLocal.withValue(true) {try await switching.analyze(privateRequest)}
         check("task scoped privacy never sends reviewed content",ReviewedMockProtocol.requests.isEmpty && scopedResult.insights.first?.source==nil)
         settings["onDeviceOnly"]=true

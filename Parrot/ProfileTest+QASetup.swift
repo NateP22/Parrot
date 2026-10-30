@@ -42,5 +42,18 @@ enum QASetupChecks {
         check("QA dangling harness cannot fall through to meeting GUI", mode(["--snapshot"],boot:true) == .rejected)
         check("QA setup default allows model-free query probe", mode(["--query-startup-test"],boot:true) == .settingsOnly)
         check("QA chosen normal launch preserves ordinary CLI", mode(["--profile-test"],boot:true,next:false) == .normal)
+        let evaluator = ["--qa-setup", "--reviewed-selector-eval", "/private/fixture/manifest.json"]
+        check("QA selector evaluator uses settings-only guard", mode(evaluator) == .settingsOnly)
+        check("QA selector evaluator stays model-free with setup default", mode(evaluator,boot:true) == .settingsOnly)
+        check("QA selector evaluator ignores next meeting preference", mode(evaluator,boot:true,next:false) == .settingsOnly)
+        check("QA selector evaluator refuses original app", mode(evaluator,"com.uygar.parrot") == .rejected)
+        check("QA selector evaluator refuses numeric trace flag", mode(evaluator,qa,NSNumber(value:1)) == .rejected)
+        check("QA selector evaluator requires setup command", mode(Array(evaluator.dropFirst())) == .rejected)
+        check("QA selector evaluator refuses dangling manifest", mode(Array(evaluator.dropLast())) == .rejected)
+        check("QA selector evaluator refuses relative manifest", mode(["--qa-setup","--reviewed-selector-eval","manifest.json"]) == .rejected)
+        check("QA selector evaluator refuses URL manifest", mode(["--qa-setup","--reviewed-selector-eval","https://example.invalid/input.json"]) == .rejected)
+        check("QA selector evaluator refuses mixed capture", mode(evaluator+["--capture-test"]) == .rejected)
+        check("QA selector evaluator refuses reordered command", mode([evaluator[1],evaluator[0],evaluator[2]]) == .rejected)
+        check("QA selector evaluator refuses repeated command", mode(evaluator+["--reviewed-selector-eval"]) == .rejected)
     }
 }
