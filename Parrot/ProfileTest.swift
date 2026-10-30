@@ -29,6 +29,7 @@ enum ProfileTest {
         testPresetRefresh()
         testPromptAndSchema()
         testClaudeModelConfiguration()
+        QASetupChecks.run { check($0, $1) }
         testGroundedAnswerGuard()
         testEvidenceReviewTransport()
         testDocumentAnswerDelivery()

@@ -63,6 +63,11 @@ class QABundlePolicy(unittest.TestCase):
                 self.assertEqual(info.get('ParrotBuildArchitecture'), architecture)
                 self.assertEqual(self.architecture_evidence, architecture)
 
+    def test_first_qa_gui_launch_uses_typed_setup_default(self):
+        info = self.configure('a' * 40)
+        self.assertIs(info.get('ParrotNativeAnswerTrace'), True)
+        self.assertIs(info.get('ParrotQASetupByDefault'), True)
+
 
 if __name__ == '__main__':
     unittest.main()

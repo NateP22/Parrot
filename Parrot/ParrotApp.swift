@@ -7,6 +7,14 @@ struct ParrotMain {
     /// design verification (see SnapshotTool.swift); otherwise the normal app runs.
     static func main() {
         let args = CommandLine.arguments
+        guard QASetupLaunch.current != .rejected else {
+            fputs("QA setup requires the verified QA app and cannot be combined with another command.\n", stderr)
+            exit(2)
+        }
+        if args.contains("--qa-setup-self-check") {
+            MainActor.assumeIsolated { QASetupSelfCheck.run() }
+            return
+        }
         if args.contains("--query-startup-test") {
             MainActor.assumeIsolated { StartupQueryHarness.run() }
             return
@@ -280,6 +288,15 @@ struct ParrotApp: App {
 
     var body: some Scene {
         WindowGroup(id: Self.mainWindowID) {
+            if QASetupLaunch.isActive {
+                QASetupView()
+                    .parrotEnvironment(recordingManager, appSession)
+                    .onAppear {
+                        applyAppearance()
+                        appDelegate.recordingManager = recordingManager
+                        appDelegate.appSession = appSession
+                    }
+            } else {
             ContentView()
                 .parrotEnvironment(recordingManager, appSession)
                 .sheet(isPresented: showOnboarding) {
@@ -296,6 +313,7 @@ struct ParrotApp: App {
                     WindowOpener { appDelegate.openMainWindow = $0 }
                 }
                 .onChange(of: appearance) { applyAppearance() }
+            }
         }
         .modelContainer(sharedModelContainer)
         .defaultSize(width: 900, height: 600)
@@ -321,8 +339,13 @@ struct ParrotApp: App {
         .menuBarExtraStyle(.menu)
 
         Settings {
+            if QASetupLaunch.isActive {
+                QASetupView()
+                    .parrotEnvironment(recordingManager, appSession)
+            } else {
             SettingsView()
                 .parrotEnvironment(recordingManager, appSession)
+            }
         }
         .modelContainer(sharedModelContainer)
     }

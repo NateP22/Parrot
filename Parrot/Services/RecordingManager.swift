@@ -141,6 +141,14 @@ final class RecordingManager {
         self.modelContext = modelContext
     }
 
+    /// Explicit isolated setup binds real profile/settings storage only. The
+    /// ordinary preparation path still owns recovery, watchers and model loads.
+    func prepareForQASetup(modelContext: ModelContext) {
+        guard QASetupLaunch.isActive else { return }
+        self.modelContext = modelContext
+        profileStore.seedAndMigrateIfNeeded(context: modelContext, knowledgeBase: knowledgeBase)
+    }
+
     /// Initialize and load the default WhisperKit model
     func prepare(modelContext: ModelContext) async {
         self.modelContext = modelContext

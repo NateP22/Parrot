@@ -37,6 +37,7 @@ p['ParrotBuildArchitecture'] = architecture
 p['ParrotKeychainService'] = test_id
 p['ParrotSessionOnlyCredentials'] = False
 p['ParrotNativeAnswerTrace'] = True
+p['ParrotQASetupByDefault'] = True
 p['SUEnableAutomaticChecks'] = False
 p['SUAutomaticallyUpdate'] = False
 p.pop('SUFeedURL', None)
@@ -70,3 +71,23 @@ with Path('build-evidence/query-startup.log').open('w') as output:
     result.check_returncode()
 PY
 tail -1 build-evidence/query-startup.log
+python3 - <<'PY'
+from pathlib import Path
+import subprocess
+with Path('build-evidence/qa-setup-model-owners.log').open('w') as output:
+    results = []
+    for owner in ['speech', 'speakers', 'local', 'embedding']:
+        output.write('OWNER ' + owner + '\n'); output.flush()
+        try:
+            result = subprocess.run(['dist/Parrot.app/Contents/MacOS/Parrot', '--qa-setup',
+                                     '--qa-setup-self-check', owner],
+                                    stdout=output, stderr=subprocess.STDOUT, timeout=15)
+            code = result.returncode
+        except subprocess.TimeoutExpired:
+            code = 124
+        results.append(code)
+        output.write('EXIT ' + str(code) + '\n'); output.flush()
+    if any(code != 0 for code in results):
+        raise SystemExit('QA setup model-owner checks failed: ' + repr(results))
+PY
+tail -1 build-evidence/qa-setup-model-owners.log

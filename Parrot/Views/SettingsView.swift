@@ -44,10 +44,14 @@ struct SettingsView: View {
     /// space); false for the standalone Cmd-, Settings window, which needs a
     /// fixed sane size.
     var isEmbedded = false
+    private let visibleSections: [SettingsSection]
 
-    init(isEmbedded: Bool = false, initialSection: SettingsSection = .general) {
+    init(isEmbedded: Bool = false, initialSection: SettingsSection = .general,
+         visibleSections: [SettingsSection] = SettingsSection.allCases) {
         self.isEmbedded = isEmbedded
-        _section = State(initialValue: initialSection)
+        let allowed = visibleSections.isEmpty ? [.apiKeys] : visibleSections
+        self.visibleSections = allowed
+        _section = State(initialValue: allowed.contains(initialSection) ? initialSection : allowed[0])
     }
 
     @Environment(RecordingManager.self) private var recordingManager
@@ -118,6 +122,7 @@ struct SettingsView: View {
         guard let raw = UserDefaults.standard.string(forKey: Self.requestedSectionKey),
               let target = SettingsSection(rawValue: raw) else { return }
         UserDefaults.standard.removeObject(forKey: Self.requestedSectionKey)
+        guard visibleSections.contains(target) else { return }
         section = target
     }
 
@@ -146,7 +151,7 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             // MARK: Section nav
             VStack(alignment: .leading, spacing: 2) {
-                ForEach(SettingsSection.allCases) { item in
+                ForEach(visibleSections) { item in
                     SettingsNavRow(title: item.title, icon: item.icon, selected: section == item) {
                         section = item
                     }
