@@ -767,26 +767,39 @@ final class CallAnalysisEngine {
     /// Claude mode with a TypeSafe key and documents, and not in a failure
     /// cool-down. Ollama and custom stay local.
     private var fastPathAvailable: Bool {
-        docMatcher?.isConfigured == true
+        // A strict profile or a required reviewed library must use the whole,
+        // reviewed-answer path, including when that library is unavailable.
+        guard activeProfile?.allowGeneralKnowledge != false,
+              knowledgeBase?.reviewedAnswerSnapshot(for: activeProfile?.id) == nil else { return false }
+        return docMatcher?.isConfigured == true
             && !CloudGate.forcesLocal && !forceLocal
             && CopilotProviderKind.selected == .claude
             && knowledgeBase.map { !$0.isEmpty } == true
             && Date.now >= fastPathPausedUntil
     }
 
+    private func fastPathIsCurrent(profileID: UUID?, knowledgeBase kb: KnowledgeBaseService) -> Bool {
+        isActive && !Task.isCancelled && activeProfile?.id == profileID
+            && knowledgeBase === kb && fastPathAvailable
+    }
+
     private func fastDocAnswer(question: String, before: String, at time: TimeInterval) async {
-        guard let matcher = docMatcher, let kb = knowledgeBase else { return }
+        guard let matcher = docMatcher, let kb = knowledgeBase, fastPathAvailable else { return }
+        let profileID = activeProfile?.id
         fastPathStats.attempts += 1
         let refs = await kb.search(query: Self.fastPathQuery(question: question, before: before),
-                                   profileID: activeProfile?.id, topK: JevDocMatcher.maxCandidates)
-        guard !refs.isEmpty, isActive, !Task.isCancelled else { return }
+                                   profileID: profileID, topK: JevDocMatcher.maxCandidates)
+        guard !refs.isEmpty, fastPathIsCurrent(profileID: profileID, knowledgeBase: kb) else { return }
+        let allowedNames = Set(kb.documentsInPlay(for: profileID))
+        guard refs.allSatisfy({ allowedNames.contains($0.documentName) }) else { return }
         do {
             let scores = try await matcher.score(asked: question, before: before,
                                                  candidates: refs.map(\.text))
-            guard isActive, !Task.isCancelled else { return }
+            guard fastPathIsCurrent(profileID: profileID, knowledgeBase: kb) else { return }
             consecutiveFastFailures = 0
             guard let best = Self.bestCandidate(scores: scores, threshold: Self.docAnswerThreshold) else { return }
             let chunk = refs[best.index]
+            guard kb.documentsInPlay(for: profileID).contains(chunk.documentName) else { return }
             let card = Insight(kindKey: Insight.docExcerptKind, title: Self.excerptTitle(for: question),
                                detail: Self.fastPathPendingText, callTime: time,
                                source: nil)
@@ -797,7 +810,7 @@ final class CallAnalysisEngine {
             onInsightInserted?(card)
         } catch {
             // Cancelled (Assistant off, a newer question, call ended) is not a failure.
-            guard !Task.isCancelled else { return }
+            guard fastPathIsCurrent(profileID: profileID, knowledgeBase: kb) else { return }
             // Silent by design: Haiku is still coming. The panel never shows a
             // fast-path error; three in a row pause it for a minute.
             consecutiveFastFailures += 1
