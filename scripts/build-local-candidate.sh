@@ -25,11 +25,14 @@ p = plistlib.loads(info.read_bytes())
 # an update inherits Keychain access or macOS permissions. Verify those on the
 # installed candidate; never relax its requirement or the original app's ACL.
 commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+architecture = subprocess.check_output(['uname', '-m'], text=True).strip()
+assert architecture in ('arm64', 'x86_64'), 'Unsupported build host architecture'
 test_id = 'com.uygar.parrot.sat54.qa'
 p['CFBundleIdentifier'] = test_id
 p['CFBundleName'] = 'Parrot SAT54 QA'
 p['CFBundleDisplayName'] = 'Parrot SAT54 QA'
 p['ParrotSourceCommit'] = commit
+p['ParrotBuildArchitecture'] = architecture
 p['ParrotKeychainService'] = test_id
 p['ParrotSessionOnlyCredentials'] = False
 p['SUEnableAutomaticChecks'] = False
@@ -45,6 +48,7 @@ assert not p['ParrotSessionOnlyCredentials'] and 'SUFeedURL' not in p
 assert p['ParrotKeychainService'] == p['CFBundleIdentifier']
 assert p['CFBundleIdentifier'] != 'com.uygar.parrot'
 Path('build-evidence/test-bundle-id.txt').write_text(test_id + '\n')
+Path('build-evidence/architecture.txt').write_text(architecture + '\n')
 Path('build-evidence/test-info.plist').write_bytes(info.read_bytes())
 PY
 codesign --force --options runtime --timestamp=none \

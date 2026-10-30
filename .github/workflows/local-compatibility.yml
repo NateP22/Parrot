@@ -1,11 +1,20 @@
 name: Local macOS compatibility candidate
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: Mac26 runner; Intel is a logic/build fallback, not ARM native acceptance
+        type: choice
+        options:
+          - macos-26
+          - macos-26-intel
+        default: macos-26
 permissions:
   contents: read
 jobs:
   candidate:
-    runs-on: macos-26
+    # Never accept an arbitrary self-hosted runner label from a dispatch input.
+    runs-on: ${{ inputs.runner == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4

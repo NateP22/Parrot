@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class QABundlePolicy(unittest.TestCase):
-    def configure(self, revision):
+    def configure(self, revision, architecture='arm64'):
         source = (ROOT / 'scripts/build-local-candidate.sh').read_text()
         block = re.search(r"python3 - <<'PY'\n(.*?)\nPY", source, re.S).group(1)
         with tempfile.TemporaryDirectory(prefix='parrot-qa-policy-') as name:
@@ -30,8 +30,13 @@ class QABundlePolicy(unittest.TestCase):
             git = base / 'bin/git'
             git.write_text('#!/bin/sh\nprintf "%s\\n" "' + revision + '"\n')
             git.chmod(0o700)
+            uname = base / 'bin/uname'
+            uname.write_text('#!/bin/sh\nprintf "%s\\n" "' + architecture + '"\n')
+            uname.chmod(0o700)
             subprocess.run(['/usr/bin/python3', '-c', block], cwd=base,
                            env=dict(os.environ, PATH=str(base / 'bin') + ':' + os.environ['PATH']), check=True)
+            evidence = base / 'build-evidence/architecture.txt'
+            self.architecture_evidence = evidence.read_text().strip() if evidence.exists() else None
             return plistlib.loads(info.read_bytes())
 
     def test_supported_qa_restarts_with_persistent_own_service(self):
@@ -50,6 +55,13 @@ class QABundlePolicy(unittest.TestCase):
         self.assertEqual(first['ParrotKeychainService'], second['ParrotKeychainService'])
         self.assertEqual(first.get('ParrotSourceCommit'), 'a' * 40)
         self.assertEqual(second.get('ParrotSourceCommit'), 'b' * 40)
+
+    def test_artifact_records_actual_build_architecture(self):
+        for architecture in ['arm64', 'x86_64']:
+            with self.subTest(architecture=architecture):
+                info = self.configure('a' * 40, architecture=architecture)
+                self.assertEqual(info.get('ParrotBuildArchitecture'), architecture)
+                self.assertEqual(self.architecture_evidence, architecture)
 
 
 if __name__ == '__main__':
