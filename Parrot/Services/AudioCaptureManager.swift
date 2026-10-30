@@ -9,6 +9,10 @@ import os
 @Observable
 final class AudioCaptureManager: NSObject {
     private var stream: SCStream?
+    @ObservationIgnored private var traceCaptureEpoch: UUID?
+    @ObservationIgnored private let traceStreamLock = NSLock()
+    @ObservationIgnored private var traceStreamEpochs: [ObjectIdentifier: UUID] = [:]
+    @ObservationIgnored private let traceCallbackLock = NSLock()
     private var audioEngine: AVAudioEngine?
     // Write uncompressed PCM (.caf) via AVAudioFile rather than AAC/.m4a via
     // AVAssetWriter: on recent macOS the AAC encoder fails to initialize
@@ -266,6 +270,8 @@ final class AudioCaptureManager: NSObject {
     /// via DispatchQueue.main.async for every observable write.
     @MainActor
     func startCapture() async throws {
+        traceCaptureEpoch = AnswerTraceRecorder.shared.sessionID
+        AnswerAudioTraceRecorder.shared.start(sessionID: traceCaptureEpoch)
         let storageDir = Self.storageDirectory()
         let timestamp = ISO8601DateFormatter().string(from: .now)
             .replacingOccurrences(of: ":", with: "-")
@@ -347,6 +353,7 @@ final class AudioCaptureManager: NSObject {
         processTap = nil
         if let stream {
             try? await stream.stopCapture()
+            traceStreamLock.withLock { traceStreamEpochs.removeValue(forKey: ObjectIdentifier(stream)) }
             self.stream = nil
         }
         captureBackend = .none
@@ -357,6 +364,11 @@ final class AudioCaptureManager: NSObject {
         audioEngine?.stop()
         audioEngine?.inputNode.removeTap(onBus: 0)
         audioEngine = nil
+        // QA callbacks recheck isCapturing under this same lock. A callback
+        // already processing drains here; a queued late callback emits nothing.
+        if AnswerAudioTraceRecorder.shared.isEnabled {
+            traceCallbackLock.lock(); traceCallbackLock.unlock()
+        }
 
         // Flush queued writes, then close the files. AVAudioFile finalizes the
         // .caf header when it deallocates; the sync barrier guarantees every
@@ -374,6 +386,7 @@ final class AudioCaptureManager: NSObject {
             let size = (attrs?[.size] as? Int) ?? 0
             NSLog("Parrot: system audio file finalized — \(size) bytes")
         }
+        _ = AnswerAudioTraceRecorder.shared.finish()
     }
 
     // MARK: - System Audio
@@ -418,9 +431,10 @@ final class AudioCaptureManager: NSObject {
             interleaved: false
         )!
         let tap = SystemAudioTap(targetFormat: targetFormat)
-        tap.onBuffer = { [weak self] buffer in
+        let traceEpoch = traceCaptureEpoch
+        tap.onBuffer = { [weak self] buffer, stamp in
             guard let self, self.isCapturing else { return }
-            self.handleSystemAudio(buffer)
+            self.handleSystemAudio(buffer, traceStamp: stamp, traceEpoch: traceEpoch)
         }
         try tap.start()
         processTap = tap
@@ -495,7 +509,14 @@ final class AudioCaptureManager: NSObject {
         let t1 = ProcessInfo.processInfo.systemUptime
         let stream = SCStream(filter: filter, configuration: config, delegate: nil)
         try stream.addStreamOutput(self, type: .audio, sampleHandlerQueue: .global(qos: .userInteractive))
-        try await stream.startCapture()
+        if let epoch = traceCaptureEpoch {
+            traceStreamLock.withLock { traceStreamEpochs[ObjectIdentifier(stream)] = epoch }
+        }
+        do { try await stream.startCapture() }
+        catch {
+            traceStreamLock.withLock { traceStreamEpochs.removeValue(forKey: ObjectIdentifier(stream)) }
+            throw error
+        }
         self.stream = stream
         captureBackend = .sck
         let now = ProcessInfo.processInfo.systemUptime
@@ -508,7 +529,12 @@ final class AudioCaptureManager: NSObject {
     /// grant, feed the echo-canceller reference, update the level, and hand the
     /// buffer to transcription. Buffers arrive as 16 kHz mono Float32 from
     /// either backend; runs on that backend's own audio queue.
-    private func handleSystemAudio(_ pcmBuffer: AVAudioPCMBuffer) {
+    private func handleSystemAudio(_ pcmBuffer: AVAudioPCMBuffer,
+                                   traceStamp: CapturedAudioClockStamp? = nil, traceEpoch: UUID? = nil) {
+        let tracing = AnswerAudioTraceRecorder.shared.isEnabled
+        if tracing { traceCallbackLock.lock() }
+        defer { if tracing { traceCallbackLock.unlock() } }
+        if tracing && !isCapturing { return }
         // First nonzero sample through the tap is the only readable proof of
         // the System Audio TCC grant — persist it for PermissionFlow.
         if captureBackend == .tap, !tapEverHadSignal,
@@ -541,7 +567,7 @@ final class AudioCaptureManager: NSObject {
         updateAudioLevel(buffer: pcmBuffer)
 
         // Persist everyone else's voice ("Them") and transcribe it
-        emit(pcmBuffer, to: .system)
+        emit(pcmBuffer, to: .system, traceStamp: traceStamp, traceEpoch: traceEpoch)
     }
 
     // MARK: - Microphone (AVAudioEngine)
@@ -591,8 +617,13 @@ final class AudioCaptureManager: NSObject {
             throw CaptureError.noMicrophone
         }
 
-        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+        let traceEpoch = traceCaptureEpoch
+        inputNode.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, audioTime in
             guard let self, self.isCapturing else { return }
+            let tracing = AnswerAudioTraceRecorder.shared.isEnabled
+            if tracing { self.traceCallbackLock.lock() }
+            defer { if tracing { self.traceCallbackLock.unlock() } }
+            if tracing && !self.isCapturing { return }
 
             // Convert to target format
             let frameCount = AVAudioFrameCount(
@@ -655,7 +686,15 @@ final class AudioCaptureManager: NSObject {
                       let cleanedBuffer = Self.makeBuffer(cleaned, format: targetFormat) else { return }
 
                 // Persist the user's voice ("Me") as 16 kHz mono PCM and transcribe it
-                self.emit(cleanedBuffer, to: .mic)
+                var stamp: CapturedAudioClockStamp?
+                if AnswerAudioTraceRecorder.shared.isEnabled {
+                    let ticks = audioTime.isHostTimeValid ? audioTime.hostTime : nil
+                    stamp = CapturedAudioClockStamp(backend: .microphone,
+                        hostStartNs: ticks.flatMap { AnswerTraceClock.nanoseconds(ticks: $0) }, hostTicks: ticks,
+                        sourceFrames: buffer.frameLength, sourceRate: inputFormat.sampleRate,
+                        sourceSampleTime: audioTime.isSampleTimeValid ? Double(audioTime.sampleTime) : nil)
+                }
+                self.emit(cleanedBuffer, to: .mic, traceStamp: stamp, traceEpoch: traceEpoch)
 
                 // Update the mic level so the UI can show the user's voice landing.
                 self.updateAudioLevel(buffer: cleanedBuffer, isMic: true)
@@ -771,7 +810,9 @@ final class AudioCaptureManager: NSObject {
     /// .caf file and transcription), first padding any silence the stream owes
     /// the recording clock. Never to the echo canceller or level meters: a burst
     /// of padding would push the AEC reference seconds out of step with the mic.
-    private func emit(_ buffer: AVAudioPCMBuffer, to stream: AudioStream) {
+    private func emit(_ buffer: AVAudioPCMBuffer, to stream: AudioStream,
+                      traceStamp: CapturedAudioClockStamp? = nil, traceEpoch: UUID? = nil) {
+        let traceCallbackNs = AnswerAudioTraceRecorder.shared.isEnabled ? AnswerTraceClock.nowNs() : nil
         let source: AudioSource = stream == .system ? .them : .me
         let rate = buffer.format.sampleRate
         var out = stream == .system ? systemFramesOut : micFramesOut
@@ -779,6 +820,7 @@ final class AudioCaptureManager: NSObject {
         var owed = Self.silenceOwed(elapsed: elapsed,
                                     written: out, incoming: Int(buffer.frameLength), sampleRate: rate)
         let name = stream == .system ? "system" : "mic"
+        let originalOut = out
         if out == 0 {
             Self.oslog.log("first \(name, privacy: .public) buffer \(elapsed, format: .fixed(precision: 3), privacy: .public) s into the recording")
         }
@@ -797,6 +839,10 @@ final class AudioCaptureManager: NSObject {
             owed -= Int(silence.frameLength)
             out += Int(silence.frameLength)
         }
+        _ = AnswerAudioTraceRecorder.shared.record(sessionID: traceEpoch,
+            source: stream == .system ? .them : .me, stamp: traceStamp,
+            outputStart: UInt64(out), paddingBefore: UInt64(out - originalOut),
+            outputFrames: buffer.frameLength, outputRate: rate, callbackNs: traceCallbackNs)
         appendAudio(buffer, to: stream)
         onAudioBuffer?(buffer, source)
         out += Int(buffer.frameLength)
@@ -1004,7 +1050,27 @@ extension AudioCaptureManager: SCStreamOutput {
             return
         }
 
-        handleSystemAudio(pcmBuffer)
+        var stamp: CapturedAudioClockStamp?
+        if AnswerAudioTraceRecorder.shared.isEnabled {
+            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let mapped = (pts.isNumeric && pts.epoch == 0 ? stream.synchronizationClock : nil).map {
+                CMSyncConvertTime(pts, from: $0, to: CMClockGetHostTimeClock())
+            }
+            let hostNs = mapped.flatMap { time -> UInt64? in
+                guard time.isNumeric, time.epoch == 0, time.value >= 0, time.timescale > 0 else { return nil }
+                return AnswerTraceClock.nanoseconds(ticks: UInt64(time.value), numerator: 1_000_000_000,
+                                                    denominator: UInt32(time.timescale))
+            }
+            let format = CMSampleBufferGetFormatDescription(sampleBuffer)
+            let rawRate = format.flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mSampleRate }
+            let frames = CMSampleBufferGetNumSamples(sampleBuffer)
+            stamp = CapturedAudioClockStamp(backend: .screenCapture, hostStartNs: hostNs, hostTicks: nil,
+                sourceFrames: frames > 0 && frames <= Int(UInt32.max) ? UInt32(frames) : 0,
+                sourceRate: rawRate ?? 0, sourceSampleTime: nil,
+                sourceClockValue: pts.value, sourceClockTimescale: pts.timescale)
+        }
+        let traceEpoch = traceStreamLock.withLock { traceStreamEpochs[ObjectIdentifier(stream)] }
+        handleSystemAudio(pcmBuffer, traceStamp: stamp, traceEpoch: traceEpoch)
     }
 }
 

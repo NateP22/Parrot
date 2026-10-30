@@ -17,7 +17,7 @@ import os
 @available(macOS 15.0, *)
 final class SystemAudioTap {
     /// Converted 16 kHz mono buffers, in order, on a serial queue of their own.
-    var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    var onBuffer: ((AVAudioPCMBuffer, CapturedAudioClockStamp?) -> Void)?
 
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
@@ -233,7 +233,16 @@ final class SystemAudioTap {
             return source
         }
         guard error == nil, converted.frameLength > 0, let onBuffer else { return }
-        deliveryQueue.async { onBuffer(converted) }
+        var stamp: CapturedAudioClockStamp?
+        if AnswerAudioTraceRecorder.shared.isEnabled {
+            let ticks = time.mFlags.contains(.hostTimeValid) ? time.mHostTime : nil
+            stamp = CapturedAudioClockStamp(backend: .tap,
+                hostStartNs: ticks.flatMap { AnswerTraceClock.nanoseconds(ticks: $0) }, hostTicks: ticks,
+                sourceFrames: source.frameLength, sourceRate: sourceFormat.sampleRate,
+                sourceSampleTime: time.mFlags.contains(.sampleTimeValid) ? time.mSampleTime : nil)
+        }
+        let capturedStamp = stamp
+        deliveryQueue.async { onBuffer(converted, capturedStamp) }
     }
 
     /// Called by the C IOProc trampoline on Core Audio's callback thread.

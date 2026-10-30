@@ -416,9 +416,13 @@ final class RecordingManager {
         // Set up audio capture. On failure, remove the just-inserted meeting —
         // otherwise it lingers as a ghost .recording row until the next launch's
         // orphan reconciliation flags it "interrupted".
+        // Begin the QA epoch before any capture callback can run.
+        _ = callAnalysisEngine.answerTraceRecorder.startSession()
         do {
             try await audioCaptureManager.startCapture()
         } catch {
+            _ = AnswerAudioTraceRecorder.shared.finish()
+            _ = callAnalysisEngine.answerTraceRecorder.finish()
             modelContext.delete(meeting)
             try? modelContext.save()
             throw error
@@ -471,7 +475,6 @@ final class RecordingManager {
         // Start transcription and the copilot loop
         transcriptionEngine.forceLocal = meeting.onDeviceOnly
         // ASR captures this epoch before its detached loop/first actor hop.
-        _ = callAnalysisEngine.answerTraceRecorder.startSession()
         transcriptionEngine.startTranscribing(meetingStartTime: .now)
         callAnalysisEngine.provider.resetUsage()  // this call's token meter starts at zero
         docMatcher.resetUsage()

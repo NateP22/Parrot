@@ -32,6 +32,7 @@ enum ProfileTest {
         ProfilePolicyTests.run { check($0, $1) }
         NativeAcceptanceTraceTests.run { check($0, $1) }
         NativeAcceptanceTraceTests.runEngine { check($0, $1) }
+        AudioTraceChecks.run { check($1, $0) }
         testSnapshotPersistence()
         testLenientKBDecode()
         ReviewedAnswerTests.run { check($0, $1) }

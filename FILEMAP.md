@@ -62,6 +62,8 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/DiarizationEngine.swift` | 156 | FluidAudio pyannote diarization (CoreML): labels + per-speaker embeddings; whole file or a live 60 s tail |
 | `Services/AnalysisProvider.swift` | 1501 | Claude Haiku 5.5; signed whole-reply ID selection, strict source/reviewer guards, original evidence and report receipts |
 | `Services/AnswerTrace.swift` | 260 | Explicit stable-QA-only bounded diagnostic journal, integer Mach clock, immutable question/request/insight bindings; no raw text or visible-frame/native acceptance claim |
+| `Services/AnswerAudioTrace.swift` | 180 | Stable-QA raw capture clocks and emitted sample/padding provenance; bounded session journal, calibration and actual file mapping remain unverified |
+| `Parrot/ProfileTest+AudioTrace.swift` | 95 | Pure raw audio-clock, stale epoch, padding, continuity/cap/overflow regressions; no audio capture or native timing acceptance |
 | `Services/OpenAICompatibleProvider.swift` | 686 | OpenAI-shaped backends/factory; reviewed-library fail-closed fallback and original reviewed reply/evidence preservation |
 | `Services/CallAnalysisEngine.swift` | 978 | Live Copilot; retrieval, cancellation/dedup, current reviewed-library scope revalidation before inserting a card |
 | `Services/JevDocMatcher.swift` | 175 | TypeSafe "Jev" client: one probability per KB chunk that it answers the question; same-issue verdicts for card dedup |
