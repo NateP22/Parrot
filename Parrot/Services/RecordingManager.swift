@@ -418,9 +418,11 @@ final class RecordingManager {
         // orphan reconciliation flags it "interrupted".
         // Begin the QA epoch before any capture callback can run.
         _ = callAnalysisEngine.answerTraceRecorder.startSession()
+        NativeAnswerFrameRecorder.shared.begin(sessionID:callAnalysisEngine.answerTraceRecorder.sessionID)
         do {
             try await audioCaptureManager.startCapture()
         } catch {
+            await NativeAnswerFrameRecorder.shared.stop()
             _ = AnswerAudioTraceRecorder.shared.finish()
             _ = callAnalysisEngine.answerTraceRecorder.finish()
             modelContext.delete(meeting)
@@ -565,6 +567,7 @@ final class RecordingManager {
         // diarization task can read them.
         callAnalysisEngine.stop()
         await audioCaptureManager.stopCapture()
+        await NativeAnswerFrameRecorder.shared.stop()
 
         // Drain the transcription backlog so the call's final words land before
         // the transcript is assembled for the summary/coaching reports.

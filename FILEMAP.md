@@ -63,6 +63,10 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/AnalysisProvider.swift` | 1501 | Claude Haiku 5.5; signed whole-reply ID selection, strict source/reviewer guards, original evidence and report receipts |
 | `Services/AnswerTrace.swift` | 260 | Explicit stable-QA-only bounded diagnostic journal, integer Mach clock, immutable question/request/insight bindings; no raw text or visible-frame/native acceptance claim |
 | `Services/AnswerAudioTrace.swift` | 180 | Stable-QA raw capture clocks and emitted sample/padding provenance; bounded session journal, calibration and actual file mapping remain unverified |
+| `Services/AnswerFrameTrace.swift` | 145 | QA own-window frame ownership/clock/geometry/retention policy; bounded callback journal never grants native visibility acceptance |
+| `Services/NativeAnswerFrameRecorder.swift` | 380 | Passive exact-own-window SCK screen-only movie, full callback metadata and sample/PTS readback; resource-gated, independent visible-text/occlusion review required |
+| `Parrot/ProfileTest+FrameTrace.swift` | 80 | Synthetic owner/clock/idle/retention/cap/epoch/geometry regressions; no screen recording or native timing proof |
+| `Views/QANativeAnswerProbe.swift` | 45 | Resolves actual Copilot NSView window and renders QA-only runtime question/Insight UUIDs beside the reply; no fixture/gold routing |
 | `Parrot/ProfileTest+AudioTrace.swift` | 95 | Pure raw audio-clock, stale epoch, padding, continuity/cap/overflow regressions; no audio capture or native timing acceptance |
 | `Services/OpenAICompatibleProvider.swift` | 686 | OpenAI-shaped backends/factory; reviewed-library fail-closed fallback and original reviewed reply/evidence preservation |
 | `Services/CallAnalysisEngine.swift` | 978 | Live Copilot; retrieval, cancellation/dedup, current reviewed-library scope revalidation before inserting a card |

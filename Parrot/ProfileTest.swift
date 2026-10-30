@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 import SwiftUI
 import SwiftData
 import Security
@@ -15,6 +16,9 @@ enum ProfileTest {
 
     @MainActor
     static func run() {
+        // Preserve the last actual completed check if a hosted runner stalls.
+        // This is CLI diagnostics only; no test or assertion is skipped.
+        setbuf(stdout,nil)
         testKindStyleFallback()
         testHexColor()
         testInsightKey()
@@ -33,6 +37,7 @@ enum ProfileTest {
         NativeAcceptanceTraceTests.run { check($0, $1) }
         NativeAcceptanceTraceTests.runEngine { check($0, $1) }
         AudioTraceChecks.run { check($1, $0) }
+        FrameTraceChecks.run { check($0,$1) }
         testSnapshotPersistence()
         testLenientKBDecode()
         ReviewedAnswerTests.run { check($0, $1) }

@@ -30,6 +30,7 @@ struct CopilotPanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if NativeAnswerFrameRecorder.isEnabled { QAFrameCaptureStatus() }
             header
 
             Divider()
@@ -42,6 +43,9 @@ struct CopilotPanelView: View {
         }
         .frame(minWidth: 320, idealWidth: 480, maxWidth: .infinity)
         .background(Theme.Colors.panel)
+        .background {
+            if NativeAnswerFrameRecorder.isEnabled { QAAnswerWindowProbe().frame(width:0,height:0) }
+        }
     }
 
     // MARK: - Derived lists
@@ -296,7 +300,8 @@ struct CopilotPanelView: View {
                         withAnimation(.spring(duration: 0.25)) {
                             engine.dismiss(hero)
                         }
-                    }
+                    },
+                    traceContext: engine.answerTraceRecorder.context(forInsightID:hero.id)
                 )
                 .id(hero.id)  // fresh identity per insight so the arrival transition fires
                 .transition(.move(edge: .top).combined(with: .opacity))
@@ -484,6 +489,7 @@ struct HeroInsightCard: View {
     let isGlowing: Bool
     let onJump: () -> Void
     let onDismiss: () -> Void
+    var traceContext: AnswerTraceContext? = nil
 
     @State private var copied = false
     /// Excerpt cards carry a whole document chunk; clamp it until tapped.
@@ -537,6 +543,8 @@ struct HeroInsightCard: View {
                 .textSelection(.enabled)
                 .lineLimit(isExcerpt && !showsWholeExcerpt ? 6 : nil)
                 .fixedSize(horizontal: false, vertical: true)
+
+            QAAnswerIdentityBadge(context:traceContext,insightID:insight.id)
 
             if isExcerpt, insight.detail.count > 240 {
                 Button(showsWholeExcerpt ? "Show less" : "Show more") {
