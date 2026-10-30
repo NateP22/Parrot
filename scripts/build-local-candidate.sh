@@ -36,6 +36,7 @@ p['ParrotSourceCommit'] = commit
 p['ParrotBuildArchitecture'] = architecture
 p['ParrotKeychainService'] = test_id
 p['ParrotSessionOnlyCredentials'] = False
+p['ParrotNativeAnswerTrace'] = True
 p['SUEnableAutomaticChecks'] = False
 p['SUAutomaticallyUpdate'] = False
 p.pop('SUFeedURL', None)

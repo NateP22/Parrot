@@ -30,6 +30,8 @@ enum ProfileTest {
         testDocumentAnswerDelivery()
         testUrgentQuestionPreemption()
         ProfilePolicyTests.run { check($0, $1) }
+        NativeAcceptanceTraceTests.run { check($0, $1) }
+        NativeAcceptanceTraceTests.runEngine { check($0, $1) }
         testSnapshotPersistence()
         testLenientKBDecode()
         ReviewedAnswerTests.run { check($0, $1) }

@@ -152,6 +152,7 @@ extension Redactor {
         copy.previousCallIsPrivate = r.previousCallIsPrivate
         copy.forceLocal = r.forceLocal
         copy.reviewedCatalog = r.reviewedCatalog
+        copy.answerTrace = r.answerTrace
         copy.reviewedQuestionKey = r.reviewedQuestionKey ?? r.currentQuestion
         if let catalog = r.reviewedCatalog {
             let candidates = catalog.candidates(question: r.reviewedQuestionKey ?? r.currentQuestion ?? "",

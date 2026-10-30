@@ -433,6 +433,9 @@ final class RecordingManager {
 
         // Wire transcription output to storage and the live copilot
         transcriptionEngine.onSegment = { [weak self] result in
+            if let trace = result.answerTraceContext {
+                _ = AnswerTraceRecorder.shared.mark(context: trace, stage: .callbackReceived)
+            }
             Task { @MainActor in
                 self?.lastVoiceAt = .now
                 self?.addSegment(result)
@@ -442,7 +445,8 @@ final class RecordingManager {
                     text: result.text,
                     at: result.endTime,
                     source: result.source,
-                    duration: result.endTime - result.startTime
+                    duration: result.endTime - result.startTime,
+                    answerTraceContext: result.answerTraceContext
                 )
             }
         }
@@ -466,6 +470,8 @@ final class RecordingManager {
 
         // Start transcription and the copilot loop
         transcriptionEngine.forceLocal = meeting.onDeviceOnly
+        // ASR captures this epoch before its detached loop/first actor hop.
+        _ = callAnalysisEngine.answerTraceRecorder.startSession()
         transcriptionEngine.startTranscribing(meetingStartTime: .now)
         callAnalysisEngine.provider.resetUsage()  // this call's token meter starts at zero
         docMatcher.resetUsage()
@@ -563,6 +569,10 @@ final class RecordingManager {
         // onSegment persists segments via Task { @MainActor } hops; yield once so
         // the last enqueued addSegment jobs run before we read segments back.
         await Task.yield()
+
+        // Include final ASR/callback diagnostics after the audio/ASR drain;
+        // the copilot above is already inactive and cannot insert late cards.
+        _ = callAnalysisEngine.answerTraceRecorder.finish()
 
         // Update meeting
         if let meeting = currentMeeting {

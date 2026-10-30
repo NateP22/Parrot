@@ -121,6 +121,7 @@ final class CallAnalysisEngine {
     @ObservationIgnored var speakerNames: (() -> [TimeInterval: String])?
 
     let provider: AnalysisProvider
+    let answerTraceRecorder: AnswerTraceRecorder
     /// The user's one-liner for this call; the prompt carries it as "Brief for this specific call".
     private(set) var callBrief = ""
     /// The matched calendar invite, when the user shares it with the copilot
@@ -132,7 +133,7 @@ final class CallAnalysisEngine {
     private var previousCallIsPrivate = false
     /// This call is on-device only (see CloudGate): Ollama, no TypeSafe.
     private(set) var forceLocal = false
-    private var segments: [(time: TimeInterval, text: String, source: AudioSource)] = []
+    private var segments: [(time: TimeInterval, text: String, source: AudioSource, trace: AnswerTraceContext?)] = []
     private var seenDocumentAnswers: Set<String> = []
     private var documentAnswerInsightIDs: Set<UUID> = []
     /// Seconds each side has spoken: the live talk balance. Seconds, not
@@ -163,8 +164,9 @@ final class CallAnalysisEngine {
     private var maximumStaleness: TimeInterval { CopilotPace.selected.timing.staleness }
     private var questionFloor: TimeInterval { CopilotPace.selected.timing.questionFloor }
 
-    init(provider: AnalysisProvider = ClaudeAnalysisProvider()) {
+    init(provider: AnalysisProvider = ClaudeAnalysisProvider(), answerTraceRecorder: AnswerTraceRecorder = .shared) {
         self.provider = provider
+        self.answerTraceRecorder = answerTraceRecorder
     }
 
     var isEnabled: Bool {
@@ -270,14 +272,15 @@ final class CallAnalysisEngine {
     /// Feed every finalized transcript segment here. The engine decides when to analyze.
     /// `duration`: how long the line took to say; without it (replays), about
     /// 15 characters a second.
-    func ingest(text: String, at time: TimeInterval, source: AudioSource, duration: TimeInterval? = nil) {
+    func ingest(text: String, at time: TimeInterval, source: AudioSource, duration: TimeInterval? = nil,
+                answerTraceContext: AnswerTraceContext? = nil) {
         guard isActive, isEnabled else { return }
         guard provider.isConfigured else {
             status = .needsAPIKey
             return
         }
 
-        segments.append((time, text, source))
+        segments.append((time, text, source, answerTraceContext))
         switch source {
         case .me: meSeconds += duration ?? Double(text.count) / 15
         case .them: themSeconds += duration ?? Double(text.count) / 15
@@ -295,6 +298,9 @@ final class CallAnalysisEngine {
         // questions don't need an instant suggested answer.
         let isUrgent = source == .them && Self.isSubstantiveQuestion(text)
         if isUrgent {
+            if let answerTraceContext {
+                _ = answerTraceRecorder.mark(context: answerTraceContext, stage: .questionReady)
+            }
             pendingUrgent = true
             Self.log.notice("question at \(time, format: .fixed(precision: 1), privacy: .public)s: \(text.prefix(80), privacy: .public)")
             if activeProfile?.allowGeneralKnowledge == false {
@@ -448,7 +454,10 @@ final class CallAnalysisEngine {
         // small talk buried the pricing chunk in the 2026-09-19 live run), the
         // recent window fills the rest.
         let recent = segments.suffix(8)
-        let currentQuestion = Self.latestQuestion(in: recent.map { ($0.text, $0.source) })
+        // Retain the same selected segment's opaque context. A text lookup
+        // would confuse identical repeated questions or a later non-question.
+        let questionSegment = recent.last { $0.source == .them && Self.isSubstantiveQuestion($0.text) }
+        let currentQuestion = questionSegment?.text
         analysisHasQuestion = currentQuestion != nil
         var references: [KBReference] = []
         if let kb = knowledgeBase {
@@ -476,6 +485,11 @@ final class CallAnalysisEngine {
             references.insert(pending.chunk, at: 0)
         }
 
+        let reviewedCatalog = !requestedGeneralKnowledge
+            ? knowledgeBase?.reviewedAnswerSnapshot(for: requestedProfileID) : nil
+        let answerTrace = answerTraceRecorder.link(context: questionSegment?.trace,
+            profileID: requestedProfileID, catalogRevisionToken: reviewedCatalog?.revisionToken,
+            allowGeneralKnowledge: requestedGeneralKnowledge)
         let request = AnalysisRequest(
             transcript: transcript,
             currentQuestion: currentQuestion,
@@ -493,9 +507,10 @@ final class CallAnalysisEngine {
             previousCallContext: previousCallContext,
             previousCallIsPrivate: previousCallIsPrivate,
             forceLocal: forceLocal,
-            reviewedCatalog: !requestedGeneralKnowledge
-                ? knowledgeBase?.reviewedAnswerSnapshot(for: requestedProfileID) : nil
+            reviewedCatalog: reviewedCatalog,
+            answerTrace: answerTrace
         )
+        answerTrace?.mark(.retrievalDone)
 
         if currentQuestion != nil && !request.allowGeneralKnowledge {
             // A prior small-talk verdict must not tell the user to wait for a
@@ -511,7 +526,9 @@ final class CallAnalysisEngine {
                 requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)
                 return
             }
+            answerTrace?.mark(.providerStarted)
             let result = try await provider.analyze(request)
+            answerTrace?.mark(.providerReturned)
             guard isActive, !Task.isCancelled else {
                 if !Task.isCancelled { analysisTask = nil }
                 return
@@ -622,8 +639,10 @@ final class CallAnalysisEngine {
                 if draft.answerKey != nil { documentAnswerInsightIDs.insert(insight.id) }
                 return insight
             }
+            if !unique.isEmpty { answerTrace?.mark(.validated) }
             insights.insert(contentsOf: unique, at: 0)
             for inserted in unique {
+                answerTrace?.bind(insightID: inserted.id)
                 Self.log.notice("card [\(inserted.kindKey, privacy: .public)] \(inserted.title.prefix(80), privacy: .public)")
                 onInsightInserted?(inserted)
             }
@@ -632,6 +651,7 @@ final class CallAnalysisEngine {
                                             pinnedKinds: Set(profile?.kinds.filter(\.isPinned).map(\.key) ?? [])))
             status = .listening
         } catch let error as AnalysisError {
+            answerTrace?.mark(.providerError)
             if isActive, !Task.isCancelled {
                 guard requestIsCurrent(request, profileID: requestedProfileID) else {
                     requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)
@@ -647,6 +667,7 @@ final class CallAnalysisEngine {
                 }
             }
         } catch {
+            answerTrace?.mark(.providerError)
             if isActive, !Task.isCancelled {
                 guard requestIsCurrent(request, profileID: requestedProfileID) else {
                     requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)

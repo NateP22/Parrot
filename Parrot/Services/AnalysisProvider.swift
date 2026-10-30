@@ -70,6 +70,8 @@ struct AnalysisRequest {
     /// Local identity/retrieval input; never serialized to the cloud selector.
     var reviewedQuestionKey: String? = nil
     var reviewedSelectionEntries: [ReviewedAnswerCatalog.SelectionEntry]? = nil
+    /// Local QA diagnostics only; explicit provider payloads never serialize it.
+    var answerTrace: AnswerTraceLink? = nil
 }
 
 /// Combined result from one analysis pass: structured insights plus a sentiment reading.
@@ -551,7 +553,7 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
             ],
         ]
 
-        let data = try await performRequest(body: body, apiKey: apiKey)
+        let data = try await performRequest(body: body, apiKey: apiKey, answerTrace: request.answerTrace)
         let parsed = try (strictQuestion ? Self.parseStrictAnswer(from: data, request: request) : Self.parseResult(from: data))
         let sourceValidated = strictQuestion ? parsed.insights : Self.validatingSources(parsed.insights, knownDocuments: request.knownDocumentNames)
         let grounded = strictQuestion ? sourceValidated : Self.validatingGroundedAnswers(
@@ -834,7 +836,8 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
     // MARK: - HTTP
 
     private func performRequest(body: [String: Any], apiKey: String,
-                                timeout: TimeInterval = 60, retryTransient: Bool = true) async throws -> Data {
+                                timeout: TimeInterval = 60, retryTransient: Bool = true,
+                                answerTrace: AnswerTraceLink? = nil) async throws -> Data {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
@@ -850,7 +853,9 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         // ponytail: single retry with fixed backoff on transient failures; add
         // jitter / Retry-After parsing if rate limits persist.
         for attempt in 0..<2 {
+            answerTrace?.mark(.requestSent, model: Self.model)
             let (data, response) = try await session.data(for: request)
+            answerTrace?.mark(.responseReceived, model: Self.model)
 
             guard let http = response as? HTTPURLResponse else {
                 throw AnalysisError.badResponse("No HTTP response")
@@ -998,7 +1003,8 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                     "format": ["type": "json_schema", "schema": Self.reviewedSelectionSchema]],
             ]
             do {
-                response = try await performRequest(body: body, apiKey: apiKey, timeout: 2, retryTransient: false)
+                response = try await performRequest(body: body, apiKey: apiKey, timeout: 2, retryTransient: false,
+                                                    answerTrace: request.answerTrace)
             } catch is CancellationError { throw CancellationError() }
             catch { response = nil }
         }

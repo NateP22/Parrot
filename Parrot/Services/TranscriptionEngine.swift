@@ -148,6 +148,8 @@ final class TranscriptionEngine {
         let startTime: TimeInterval
         let endTime: TimeInterval
         let confidence: Float?
+        /// QA-only runtime identity, never persisted as transcript text.
+        var answerTraceContext: AnswerTraceContext? = nil
     }
 
     // MARK: - Model Management
@@ -745,6 +747,9 @@ final class TranscriptionEngine {
     @MainActor
     func startTranscribing(meetingStartTime: Date) {
         guard isReady else { return }
+        // Freeze the recording epoch before decode work can suspend. A late
+        // result from this loop must never acquire the next recording's ID.
+        let answerTraceSession = AnswerTraceRecorder.shared.sessionID
         // Never run two loops: cancel any prior task before starting a new one.
         transcriptionTask?.cancel()
         transcriptionTask = nil
@@ -1163,6 +1168,11 @@ final class TranscriptionEngine {
                             guard let text = self.glossaryActive
                                 ? Self.strippingGlossaryEcho(cleaned) : cleaned else { continue }
 
+                            let trace = AnswerTraceRecorder.shared.makeContext(
+                                source: source == .me ? .me : .them, expectedSessionID: answerTraceSession)
+                            if let trace {
+                                _ = AnswerTraceRecorder.shared.mark(context: trace, stage: .asrFinal)
+                            }
                             await MainActor.run {
                                 // Clear the interim line — the text lives in the
                                 // committed segment now; leaving it here kept a
@@ -1174,7 +1184,8 @@ final class TranscriptionEngine {
                                     source: source,
                                     startTime: startTime,
                                     endTime: endTime,
-                                    confidence: piece.confidence
+                                    confidence: piece.confidence,
+                                    answerTraceContext: trace
                                 ))
                             }
                         }
