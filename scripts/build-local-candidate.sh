@@ -6,6 +6,7 @@ swift --version | tee build-evidence/toolchain.txt
 xcodebuild -version | tee -a build-evidence/toolchain.txt
 python3 scripts/test-keychain-store.py | tee build-evidence/credentials.log
 python3 scripts/test-qa-bundle-policy.py 2>&1 | tee build-evidence/qa-bundle-policy.log
+python3 scripts/test-native-answer-qualification.py 2>&1 | tee build-evidence/native-answer-qualification.log
 bash scripts/test-microphone-input.sh | tee build-evidence/microphone-format.log
 make build CONFIG=release SWIFT_BUILD_FLAGS="--force-resolved-versions --disable-keychain --disable-netrc"
 .build/release/Parrot --profile-test > build-evidence/profile-test.log 2>&1

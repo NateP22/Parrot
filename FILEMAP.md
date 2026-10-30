@@ -174,7 +174,9 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/release.sh` | Release packaging; mirrors the Makefile's bundle step; builds `Parrot.mcpb` and `server.json`; refuses a version `WhatsNew` doesn't describe and embeds its notes in the appcast |
 | `scripts/assemble-help.sh` | Builds the Apple Help Book into the .app from `docs/help/` (both builders call it) |
 | `scripts/catalog-sign.swift` | Local Ed25519 artifact signer; private key stays outside source/CI/vault; requires an approved payload hash before signing |
-| `scripts/build-local-candidate.sh` | Private-test Mac CI build: full harness, commit-specific ad-hoc bundle identity, session-only keys, updates off, signature/archive/startup receipts; never installs production |
+| `scripts/build-local-candidate.sh` | Private-test Mac CI build: full harness, stable isolated QA identity/service, persistent QA keys, updates off, architecture/signature/archive/startup receipts; ad-hoc update continuity requires native proof |
+| `scripts/native_answer_qualification.py` | Offline per-trial acoustic-to-visible calculation on independently reviewed evidence; exact integer uncertainty/deadline/identity/first-answer gates; never authenticates evidence or grants native acceptance |
+| `scripts/test-native-answer-qualification.py` | Synthetic timing, wrong-first, visibility, plainness and bounded-file parser regressions; no app/audio/provider access |
 | `integrations/claude-plugin/` | Claude plugin for the connector directory: `.mcp.json` + `server/launch.sh` (same launcher as the release `.mcpb`, harness-checked), seven skills mirroring the MCP prompts, README, PRIVACY |
 | `server.json` | MCP Registry entry, written by `scripts/release.sh` per release (version, `.mcpb` URL, sha256) |
 | `docs/help/` | User guide: one HTML set serving GitHub Pages AND the in-app Help menu |

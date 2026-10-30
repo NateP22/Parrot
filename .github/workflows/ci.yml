@@ -42,6 +42,7 @@ jobs:
         run: |
           python3 scripts/test-keychain-store.py
           python3 scripts/test-qa-bundle-policy.py
+          python3 scripts/test-native-answer-qualification.py
 
       - name: Build (debug)
         run: swift build -c debug --force-resolved-versions
