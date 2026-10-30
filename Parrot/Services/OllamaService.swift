@@ -65,6 +65,7 @@ final class OllamaService {
 
     /// Marks `model` as downloading; false when another pull holds the slot.
     func beginPull(_ model: String) -> Bool {
+        guard QASetupLaunch.permitsMeetingWork else { return false }
         guard pullingModel == nil else { return false }
         pullingModel = model
         statuses[model] = .pulling(progress: nil)
@@ -74,6 +75,7 @@ final class OllamaService {
     /// Launch: a private-path user whose model never finished gets the pull
     /// started again. Ollama keeps finished layers, so it picks up.
     func resumeIfNeeded(defaults: UserDefaults = .standard) async {
+        guard QASetupLaunch.permitsMeetingWork else { return }
         guard defaults.string(forKey: CopilotPath.defaultsKey) == CopilotPath.private.rawValue,
               defaults.bool(forKey: CopilotPathSettings.enableWhenReadyKey) else { return }
         let model = OpenAICompatibleProvider.ollamaModel

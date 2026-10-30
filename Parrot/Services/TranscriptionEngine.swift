@@ -173,6 +173,7 @@ final class TranscriptionEngine {
     /// never blocked. Same rule for start/stopTranscribing below.
     @MainActor
     func loadModel(_ modelName: String = "base") async {
+        guard QASetupLaunch.permitsMeetingWork else { return }
         // Switching models mid-download must not race two loads (the old
         // last-finisher-wins behavior could load a model the user had already
         // navigated away from). The newest call cancels the previous one; the
@@ -238,6 +239,7 @@ final class TranscriptionEngine {
     nonisolated static func makeWhisperKit(_ modelName: String,
                                            loading: (@Sendable () async -> Void)? = nil,
                                            progress: (@Sendable (Double) -> Void)? = nil) async throws -> WhisperKit {
+        guard QASetupLaunch.permitsMeetingWork else { throw QASetupLaunch.Unavailable.model }
         let resolvedModelName = hubVariant(for: modelName)
         let modelFolder: URL
         if let localFolder = localModelFolder(for: modelName) {
@@ -273,6 +275,7 @@ final class TranscriptionEngine {
     /// `prepareFallback`); that side's audio waits in its buffer meanwhile.
     // ponytail: only the transcription loop and imports call this, never both at once.
     func ensureWhisper() async -> WhisperKit? {
+        guard QASetupLaunch.permitsMeetingWork else { return nil }
         if let whisperKit { return whisperKit }
         // One load however many callers (the loop, an import, the preload).
         let load: Task<WhisperKit?, Never> = bufferLock.withLock {
@@ -301,6 +304,7 @@ final class TranscriptionEngine {
     /// ungated, as before. Capped so a stalled download can't hold up the
     /// polish or import passes that wait on it.
     func loadSpeechDetector() async {
+        guard QASetupLaunch.permitsMeetingWork else { return }
         guard bufferLock.withLock({ speechDetector }) == nil else { return }
         do {
             let detector = try await Self.withTimeout(seconds: 60) { try await VadManager() }
@@ -746,6 +750,7 @@ final class TranscriptionEngine {
     /// Start the continuous transcription loop
     @MainActor
     func startTranscribing(meetingStartTime: Date) {
+        guard QASetupLaunch.permitsMeetingWork else { return }
         guard isReady else { return }
         // Freeze the recording epoch before decode work can suspend. A late
         // result from this loop must never acquire the next recording's ID.
@@ -1568,6 +1573,7 @@ final class TranscriptionEngine {
     /// Whisper's per-utterance boundaries are exactly what we want.
     /// WhisperKit loads + resamples any format (m4a/mp3/wav/aac/caf) to 16 kHz mono.
     func transcribeFile(url: URL) async throws -> [TranscriptionResult] {
+        guard QASetupLaunch.permitsMeetingWork else { throw QASetupLaunch.Unavailable.model }
         if let parakeet, let lines = try await parakeetImport(url: url, parakeet: parakeet) { return lines }
         // Whisper: on Parakeet, loaded for this file only when it needs it.
         guard let whisperKit = await ensureWhisper() else { throw RecordingError.modelNotReady }

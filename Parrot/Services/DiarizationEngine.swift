@@ -53,6 +53,7 @@ final class DiarizationEngine {
     /// Downloads models if missing (first run needs network). Lets Settings
     /// pre-fetch without running a diarization.
     func ensureModels() async throws {
+        guard QASetupLaunch.permitsMeetingWork else { throw QASetupLaunch.Unavailable.model }
         isProcessing = true
         defer { isProcessing = false }
         _ = try await DiarizerModels.downloadIfNeeded()
@@ -94,11 +95,13 @@ final class DiarizationEngine {
 
     /// Diarizes only the tail of the recording; times come back in call time.
     func diarize(audioURL: URL, lastSeconds: TimeInterval) async throws -> Output {
+        guard QASetupLaunch.permitsMeetingWork else { throw QASetupLaunch.Unavailable.model }
         let tail = try Self.tail(of: audioURL, seconds: lastSeconds)
         return try await diarize(load: { tail.samples }, offset: tail.offset)
     }
 
     private func diarize(load: @escaping @Sendable () throws -> [Float], offset: TimeInterval) async throws -> Output {
+        guard QASetupLaunch.permitsMeetingWork else { throw QASetupLaunch.Unavailable.model }
         isProcessing = true
         progress = 0
         defer {

@@ -270,6 +270,7 @@ final class AudioCaptureManager: NSObject {
     /// via DispatchQueue.main.async for every observable write.
     @MainActor
     func startCapture() async throws {
+        guard QASetupLaunch.permitsMeetingWork else { throw QASetupLaunch.Unavailable.recording }
         traceCaptureEpoch = AnswerTraceRecorder.shared.sessionID
         AnswerAudioTraceRecorder.shared.start(sessionID: traceCaptureEpoch)
         let storageDir = Self.storageDirectory()

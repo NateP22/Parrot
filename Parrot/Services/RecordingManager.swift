@@ -151,6 +151,10 @@ final class RecordingManager {
 
     /// Initialize and load the default WhisperKit model
     func prepare(modelContext: ModelContext) async {
+        guard QASetupLaunch.permitsMeetingWork else {
+            prepareForQASetup(modelContext: modelContext)
+            return
+        }
         self.modelContext = modelContext
         recoverInterruptedRecordings(in: modelContext)
         profileStore.seedAndMigrateIfNeeded(context: modelContext, knowledgeBase: knowledgeBase)
@@ -337,6 +341,7 @@ final class RecordingManager {
     /// when a permission flow was triggered instead.
     func preflightPermissionsAndStart(modelContext: ModelContext,
                                       profileOverride: CallProfile? = nil) async throws {
+        guard QASetupLaunch.permitsMeetingWork else { throw QASetupLaunch.Unavailable.recording }
         // Check the system-audio permission BEFORE touching any capture API.
         // Most macOS 15+: the audio-only tap permission (optimistic after the one
         // official prompt — its grant can't be read back, see PermissionFlow).
@@ -370,6 +375,7 @@ final class RecordingManager {
     /// detected call whose calendar title names one) without changing the
     /// user's active choice.
     func startRecording(modelContext: ModelContext, profileOverride: CallProfile? = nil) async throws {
+        guard QASetupLaunch.permitsMeetingWork else { throw QASetupLaunch.Unavailable.recording }
         self.modelContext = modelContext
         // Reject re-entry up front (before any await) so a double-trigger can't
         // start two recordings / two transcription loops. Also blocked while a
@@ -661,6 +667,7 @@ final class RecordingManager {
     /// status `.processing`) so the caller can select it; nil if it couldn't start.
     @discardableResult
     func importAudioFile(from pickedURL: URL, modelContext: ModelContext) -> Meeting? {
+        guard QASetupLaunch.permitsMeetingWork else { return nil }
         self.modelContext = modelContext
         // One owner of WhisperKit at a time: refuse while recording or importing.
         guard !isRecording, !isStarting, !isStopping, importProgress == nil,

@@ -37,7 +37,7 @@ final class KnowledgeBaseService {
         if persistent {
             load()
             loadReviewedCatalog()
-            Task { await refreshEmbeddings() }
+            if QASetupLaunch.permitsMeetingWork { Task { await refreshEmbeddings() } }
         }
     }
 
@@ -567,6 +567,7 @@ final class KnowledgeBaseService {
     /// model revision. Until then search skips those vectors and the chunks
     /// match on exact words, so results stay correct meanwhile.
     func refreshEmbeddings() async {
+        guard QASetupLaunch.permitsMeetingWork else { return }
         // A call that lands mid-refresh (a document in a new script added
         // during the first-launch re-embed) gets one more pass, not dropped.
         guard !isRefreshing else { refreshAgain = true; return }
@@ -621,6 +622,7 @@ final class KnowledgeBaseService {
     /// The loaded model for a language; nil when the OS has none for it or
     /// its assets aren't downloaded yet. Caller holds `embeddingLock`.
     private nonisolated static func loadedModel(for language: NLLanguage) -> NLContextualEmbedding? {
+        guard QASetupLaunch.permitsMeetingWork else { return nil }
         if let model = models[language.rawValue] { return model }
         guard let model = NLContextualEmbedding(language: language), model.hasAvailableAssets,
               (try? model.load()) != nil else { return nil }

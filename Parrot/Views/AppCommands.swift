@@ -119,6 +119,7 @@ enum MeetingActions {
     /// hasCompletedOnboarding key, so clearing it presents the tour right
     /// away — no relaunch. Mode and step go first so the flip lands on them.
     static func showWelcomeTour() {
+        guard QASetupLaunch.permitsMeetingWork else { return }
         UserDefaults.standard.set(OnboardingMode.full.rawValue, forKey: OnboardingMode.defaultsKey)
         UserDefaults.standard.set(OnboardingStep.welcome.rawValue, forKey: OnboardingFlow.stepKey)
         UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
@@ -126,6 +127,7 @@ enum MeetingActions {
 
     /// The short tour from Home or Settings: Meet Copilot → path → setup → Ready.
     static func showCopilotSetup() {
+        guard QASetupLaunch.permitsMeetingWork else { return }
         UserDefaults.standard.set(OnboardingMode.copilot.rawValue, forKey: OnboardingMode.defaultsKey)
         UserDefaults.standard.set(OnboardingStep.meetCopilot.rawValue, forKey: OnboardingFlow.stepKey)
         UserDefaults.standard.set(false, forKey: "hasCompletedOnboarding")
@@ -146,6 +148,7 @@ struct ParrotCommands: Commands {
             Button("Check for Updates…") {
                 AppUpdater.shared.checkForUpdates()
             }
+            .disabled(!QASetupLaunch.permitsMeetingWork)
         }
 
         // File: the app's objects are recordings — import and export live here.
@@ -154,7 +157,7 @@ struct ParrotCommands: Commands {
                 NotificationCenter.default.post(name: .parrotImportAudio, object: nil)
             }
             .keyboardShortcut("o")
-            .disabled(recordingManager.isRecording)
+            .disabled(!QASetupLaunch.permitsMeetingWork || recordingManager.isRecording)
 
             Divider()
 
@@ -186,11 +189,13 @@ struct ParrotCommands: Commands {
                 NotificationCenter.default.post(name: .parrotFocusSearch, object: nil)
             }
             .keyboardShortcut("f")
+            .disabled(!QASetupLaunch.permitsMeetingWork)
 
             Button("Ask Parrot…") {
                 session.askRequest = AppSession.AskRequest(scope: nil, scopeTitle: nil)
             }
             .keyboardShortcut("k")
+            .disabled(!QASetupLaunch.permitsMeetingWork)
         }
 
         CommandMenu("Recording") {
@@ -211,7 +216,7 @@ struct ParrotCommands: Commands {
                 }
             }
             .keyboardShortcut("r")
-            .disabled(recordingManager.isRecording || !recordingManager.transcriptionEngine.isReady)
+            .disabled(!QASetupLaunch.permitsMeetingWork || recordingManager.isRecording || !recordingManager.transcriptionEngine.isReady)
 
             Button("Stop Recording") {
                 Task { @MainActor in
@@ -256,6 +261,7 @@ struct ParrotCommands: Commands {
             Button("Show Welcome Tour") {
                 MeetingActions.showWelcomeTour()
             }
+            .disabled(!QASetupLaunch.permitsMeetingWork)
             Divider()
             Button("Parrot on GitHub") {
                 MeetingActions.open(MeetingActions.repoURL)
@@ -266,6 +272,7 @@ struct ParrotCommands: Commands {
             Button("Report a Bug…") {
                 NotificationCenter.default.post(name: .parrotReportBug, object: nil)
             }
+            .disabled(!QASetupLaunch.permitsMeetingWork)
             Button("Browse Existing Issues") {
                 MeetingActions.open("\(MeetingActions.repoURL)/issues")
             }

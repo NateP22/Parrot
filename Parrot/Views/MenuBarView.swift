@@ -25,6 +25,9 @@ struct MenuBarView: View {
     }
 
     var body: some View {
+        if QASetupLaunch.isActive {
+            Text("Setup only: keys and profiles")
+        } else {
         if let prompt = recordingManager.callWatcher.prompt {
             Button(prompt.kind == .start
                    ? "Record \(prompt.appName) Call"
@@ -91,6 +94,7 @@ struct MenuBarView: View {
 
         Divider()
 
+        }
         Button("Open Parrot") { showMainWindow() }
         Button("Quit Parrot") { NSApplication.shared.terminate(nil) }
             .keyboardShortcut("q")

@@ -68,7 +68,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ProfileTest+FrameTrace.swift` | 80 | Synthetic owner/clock/idle/retention/cap/epoch/geometry regressions; no screen recording or native timing proof |
 | `Parrot/ProfileTest+QASetup.swift` | 35 | Synthetic exact-QA launch admission, conflicting CLI and typed-flag regressions; no native readiness |
 | `Parrot/QASetupSelfCheck.swift` | 55 | Bundled --qa-setup --qa-setup-self-check exercises actual disabled speech/diarization/Ollama/embedding owners; component-only, no keys/audio/store |
-| `Services/QASetupLaunch.swift` | 35 | Explicit process-only exact-QA settings admission; normal meeting launch preserved, no readiness claim |
+| `Services/QASetupLaunch.swift` | 65 | Immutable exact-QA setup admission and shared recording/model refusal; normal meeting launch preserved, no readiness claim |
 | `Views/QASetupView.swift` | 25 | Existing real API-key/profile Settings in a labeled lightweight QA-only scene; no onboarding bypass persisted |
 | `Views/QANativeAnswerProbe.swift` | 45 | Resolves actual Copilot NSView window and renders QA-only runtime question/Insight UUIDs beside the reply; no fixture/gold routing |
 | `Parrot/ProfileTest+AudioTrace.swift` | 95 | Pure raw audio-clock, stale epoch, padding, continuity/cap/overflow regressions; no audio capture or native timing acceptance |
