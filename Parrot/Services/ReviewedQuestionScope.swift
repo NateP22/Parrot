@@ -28,9 +28,23 @@ enum ReviewedQuestionForm: String, Codable, Hashable {
             guard let wordRange = Range(word, in: question) else { continue }
             let end = index + 1 < matches.count
                 ? Range(matches[index + 1].range, in: question)!.lowerBound : question.endIndex
-            let clause = ReviewedQuestionScope.normalize(String(question[wordRange.lowerBound..<end]))
+            let rawClause = String(question[wordRange.lowerBound..<end])
+            let clause = ReviewedQuestionScope.normalize(rawClause)
             let first = clause.split(separator: " ").first.map(String.init) ?? ""
-            if requestsClientState(clause) {
+            let conditionalStill = (first == "will" || first == "would")
+                && hasHypotheticalControlAntecedent(in: question, before: wordRange.lowerBound)
+            // A relative qualifier can contain a wh-word too. It must not
+            // turn an owned input's availability into a general capability.
+            var relativeQualifier = false
+            if index + 1 < matches.count,
+               let nextRange = Range(matches[index + 1].range, in: question) {
+                let next = ReviewedQuestionScope.normalize(String(question[nextRange]))
+                let separate = rawClause.range(of: "(?:[.!?;]|\\b(?:and|or|but|also|then|so))\\s*[,;:]?\\s*$",
+                    options: [.regularExpression, .caseInsensitive]) != nil
+                relativeQualifier = ["which", "who", "whose", "where", "when"].contains(next) && !separate
+            }
+            if requestsClientState(clause, allowsConditionalStill: conditionalStill,
+                                   allowsOwnedStyleInput: !relativeQualifier) {
                 result.insert(.clientState)
                 continue
             }
@@ -59,10 +73,11 @@ enum ReviewedQuestionForm: String, Codable, Hashable {
 
     /// Published help describes general behavior, not a client's actual file.
     /// These conservative exclusions are routing gates, not a semantic proof.
-    private static func requestsClientState(_ clause: String) -> Bool {
+    private static func requestsClientState(_ clause: String, allowsConditionalStill: Bool,
+                                           allowsOwnedStyleInput: Bool) -> Bool {
         // "Selected" is part of this command label, not evidence about the
         // user's current selection. Other state words and clauses still count.
-        let stateClause = clause.replacingOccurrences(of: "\\bimport selected\\b",
+        var stateClause = clause.replacingOccurrences(of: "\\bimport selected\\b",
             with: "import command", options: .regularExpression)
         func matches(_ pattern: String) -> Bool {
             stateClause.range(of: pattern, options: .regularExpression) != nil
@@ -70,9 +85,30 @@ enum ReviewedQuestionForm: String, Codable, Hashable {
         // Instructions can mention "my document" without asserting its state.
         if ["how do i ", "how do we ", "how can i ", "how can we ", "how to "]
             .contains(where: clause.hasPrefix) { return false }
+        // A generic input class ("already imported records") does not assert
+        // that this client's records were imported. Mask only that adjective;
+        // another temporal cue, owned file or later question still needs state.
+        if matches("^(?:(?:does|do|will|would)\\b|how (?:does|do)\\b|what (?:does|do|happens)\\b|when (?:does|do)\\b)"),
+           !matches("\\b(?:selected|assigned|configured|current|last|latest|previous|prior|was|were|did|has|have|had|yesterday|today|ago|previously|earlier)\\b") {
+            stateClause = stateClause.replacingOccurrences(
+                of: "\\b((?:replace|re place|import|reimport|process|reprocess|handle|overwrite|update|export|format|skip|affect|happens to)(?: [a-z0-9]+){0,3}) already (placed|imported|processed|saved|formatted|published|exported|printed) (items|records|stories|articles|files|documents|images|photos|frames)\\b",
+                with: "$1 $2 $3", options: .regularExpression)
+        }
         // A help article cannot establish present availability or completion.
-        // Apply this to auxiliary clauses too, not only wh-questions.
-        if matches("\\b(?:now|currently|already|yet|still|anymore)\\b") { return true }
+        if matches("\\b(?:now|currently|already|yet|anymore)\\b") { return true }
+        if matches("\\bstill\\b"), !allowsConditionalStill
+            || matches("\\b(?:available|enabled|disabled|active|inactive|running|configured|selected|assigned|connected|installed)\\b") { return true }
+        // Only a complete generic role-mapping request can use this operand
+        // exception. Free-form complements can hide an actual account or file.
+        let genericRoleUse = "^(?:can|could) (?:i|we) (?:map|assign|choose) (?:my|our) own (?:(?:document|paragraph|character|text|custom) ){0,2}styles"
+            + "(?: (?:to|for) (?:(?:both|each|all)(?: (?:text )?roles?)?|(?:one|two|three|four|multiple|separate|different|individual|[0-9]+) (?:text )?roles?))?$"
+        if allowsOwnedStyleInput,
+           matches(genericRoleUse),
+           !matches("\\b(?:that|which|who|whose|where|when|selected|assigned|configured|current|mapped|last|latest|previous|prior|was|were|did|has|have|had|yesterday|today|ago|previously|earlier)\\b") {
+            stateClause = stateClause.replacingOccurrences(
+                of: "\\b(?:my|our) own (?:(?:document|paragraph|character|text|custom) ){0,2}styles\\b",
+                with: "style inputs", options: .regularExpression)
+        }
         // Ownership anywhere in a non-procedure clause can make a general
         // capability question an account entitlement or current-file question.
         if matches("\\b(?:my|our|your|their|this|that) (?:[a-z0-9]+ ){0,4}(?:account|workspace|file|document|publication|project|budget|selection|styles|images|photos)\\b") { return true }
@@ -96,6 +132,32 @@ enum ReviewedQuestionForm: String, Codable, Hashable {
            words.dropFirst(copula + 1).contains(where: { statePredicates.contains($0) })
             || matches("\\b(?:turned|switched) (?:on|off)\\b") { return true }
         return false
+    }
+
+    /// Context belongs only to the immediately attached consequence, never a
+    /// subsequent question. A factual or unrelated "if" is not an exemption.
+    private static func hasHypotheticalControlAntecedent(in question: String,
+                                                        before position: String.Index) -> Bool {
+        let prefix = String(question[..<position])
+        let pattern = "(?:^|[.!?;])\\s*if\\s+([^.!?;]+?),\\s*(?:then\\s*)?$"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: prefix, range: NSRange(prefix.startIndex..., in: prefix)),
+              let range = Range(match.range(at: 1), in: prefix) else { return false }
+        let premise = ReviewedQuestionScope.normalize(String(prefix[range]))
+        func matches(_ pattern: String) -> Bool {
+            premise.range(of: pattern, options: .regularExpression) != nil
+        }
+        // Require a setting/value relation, not merely an action such as
+        // leaving home. "Set" can also describe the past, so retain time cues.
+        let settingsContext = "(?:(?: in| under| within) (?:[a-z0-9]+ ){0,4}(?:settings|options|panel|dialog|controls))?"
+        let blankSetting = matches("^(?:i|we|you) (?:leave|set) (?:[a-z0-9]+ ){1,8}(?:blank|empty)" + settingsContext + "$")
+        let switchSetting = matches("^(?:i|we|you) (?:turn|set|leave) (?:[a-z0-9]+ ){1,8}(?:on|off)" + settingsContext + "$")
+        guard blankSetting || switchSetting,
+              !matches("\\b(?:now|currently|already|yet|still|last|latest|previous|prior|yesterday|today|ago|previously|earlier|did|has|have|had|was|were|selected|assigned|configured)\\b"),
+              !matches("\\b(?:in|on|since|before|after) [0-9]{4}\\b"),
+              !matches("\\b(?:account|workspace|subscription|license|entitlement)\\b"),
+              !matches("\\b(?:my|our|your|their|this|that) (?:[a-z0-9]+ ){0,4}(?:file|document|publication|project|budget|selection|styles|images|photos)\\b") else { return false }
+        return true
     }
 }
 
