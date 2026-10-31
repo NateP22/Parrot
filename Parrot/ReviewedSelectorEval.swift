@@ -27,6 +27,9 @@ enum ReviewedSelectorEval {
         let schema=1,nativeAcceptance=false,scored=false
         let timing="Component analyze call only; excludes audio, transcription and visible UI."
         let admission="Normal signed decode plus source-byte admission in memory; not a normal KB import."
+        let contextVersion=2
+        let isolated="Question only; excludes fixture previous and accumulated history."
+        let rolling="Prior fixture questions plus explicit previous; overlapping prior context merged, current repetitions preserved."
         let buildCommit:String,configuredModel:String,selectedRouteAtStart:String
         let manifestSHA256:String,catalogSHA256:String,casesSHA256:String,snapshotRevision:String
         let modes:[String]
@@ -49,11 +52,12 @@ enum ReviewedSelectorEval {
               Set(prepared.modes).isSubset(of:Set(["isolated","rolling"])) else { throw Failure.rejected }
         let names=prepared.snapshot.sources.map(\.name)
         for mode in prepared.modes {
+            guard let contextMode=ReviewedSelectorContext.Mode(rawValue:mode) else { throw Failure.rejected }
             var history=""
             for item in prepared.cases {
                 try Task.checkCancellation()
-                let context=mode=="rolling" ? [history,item.previous].filter{!$0.isEmpty}.joined(separator:"\n") : item.previous
-                let transcript=String([context,"Them: "+item.question].filter{!$0.isEmpty}.joined(separator:"\n").suffix(2500))
+                let window=ReviewedSelectorContext.window(mode:contextMode,history:history,previous:item.previous,question:item.question)
+                let transcript=window.transcript
                 var request=AnalysisRequest(transcript:transcript,currentQuestion:item.question,knownInsightTitles:[],
                     references:[],instructions:"",callBrief:"",allowGeneralKnowledge:false,
                     knownDocumentNames:names,persona:"",counterpart:"client",kinds:[],gauges:[])
@@ -92,7 +96,7 @@ enum ReviewedSelectorEval {
                     selectedUnitDigest:matches ? selected?.contentDigest : nil,evidence:evidence,
                     outputMatchesObservedUnit:matches))
                 if cancelled { throw CancellationError() }
-                history=transcript
+                history=window.nextHistory
             }
         }
     }

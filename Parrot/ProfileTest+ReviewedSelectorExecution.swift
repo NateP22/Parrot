@@ -24,7 +24,7 @@ enum ReviewedSelectorExecutionChecks {
         let catalog=try ReviewedAnswerCatalog.decode(ReviewedAnswerTests.fixtureData)
         let source=catalog.sources[0],answer=catalog.answers[0]
         let cases=[ReviewedSelectorInput.ExecutionCase(id:"fixture-case-a",question:"How do I export a saved draft?",previous:"Them: The draft is already saved."),
-                   ReviewedSelectorInput.ExecutionCase(id:"fixture-case-b",question:"How do I export a saved café draft?",previous:"Them: PREVIOUS_CONTEXT_ONLY")]
+                   ReviewedSelectorInput.ExecutionCase(id:"fixture-case-b",question:"How do I export a saved café draft?",previous:"How do I export a saved draft?")]
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("selector-execution-"+UUID().uuidString)
         let group=root.appendingPathComponent("frozen")
         try FileManager.default.createDirectory(at:group,withIntermediateDirectories:true)
@@ -106,7 +106,7 @@ enum ReviewedSelectorExecutionChecks {
         let conversations=payloads.compactMap{$0["recent_conversation"] as? String}
         check("selector execution isolated starts fresh and rolling carries preceding question",
               conversations.count==4 && !conversations[1].contains(cases[0].question) &&
-              conversations[3].contains(cases[0].question))
+              conversations[3].components(separatedBy:cases[0].question).count==2)
         let sent=ReviewedMockProtocol.bodies.map{String(decoding:$0,as:UTF8.self)}.joined()
         check("selector execution never serializes local case identities or score keys",
               !sent.contains("fixture-case-") && !sent.contains("DO_NOT_SEND_ORACLE") && !sent.contains("expected_unit") && !sent.contains("review_required") && !sent.contains("semanticStatus"))
