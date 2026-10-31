@@ -23,17 +23,32 @@ enum ReviewedSelectorExecutionChecks {
     @MainActor private static func run(_ check:(String,Bool)->Void) async throws {
         let catalog=try ReviewedAnswerCatalog.decode(ReviewedAnswerTests.fixtureData)
         let source=catalog.sources[0],answer=catalog.answers[0]
-        let doc=KBDocument(name:source.name,chunkCount:1,addedAt:.now,contentSHA256:source.sha256)
-        let snapshot=catalog.admitted(documents:[doc],folders:[],profileID:nil)
         let cases=[ReviewedSelectorInput.ExecutionCase(id:"fixture-case-a",question:"How do I export a saved draft?",previous:"Them: The draft is already saved."),
                    ReviewedSelectorInput.ExecutionCase(id:"fixture-case-b",question:"How do I export a saved café draft?",previous:"Them: PREVIOUS_CONTEXT_ONLY")]
         let root=FileManager.default.temporaryDirectory.appendingPathComponent("selector-execution-"+UUID().uuidString)
-        try FileManager.default.createDirectory(at:root,withIntermediateDirectories:true)
+        let group=root.appendingPathComponent("frozen")
+        try FileManager.default.createDirectory(at:group,withIntermediateDirectories:true)
         defer { try? FileManager.default.removeItem(at:root) }
-        let prepared=ReviewedSelectorInput.Prepared(snapshot:snapshot,cases:cases,modes:["isolated","rolling"],
-            manifestSHA256:String(repeating:"a",count:64),catalogSHA256:ReviewedAnswerCatalog.sha256(ReviewedAnswerTests.fixtureData),
-            casesSHA256:String(repeating:"b",count:64),expectedBuildCommit:String(repeating:"1",count:40),
-            groupURL:root,resultURL:root.appendingPathComponent("result.jsonl"),files:[])
+        let sourceData=Data(source.text.utf8)
+        try ReviewedAnswerTests.fixtureData.write(to:group.appendingPathComponent("catalog.json"))
+        try sourceData.write(to:group.appendingPathComponent("source.md"))
+        let caseData=try JSONSerialization.data(withJSONObject:cases.map { item in
+            ["id":item.id,"question":item.question,"previous":item.previous,
+             "expected_unit":"DO_NOT_SEND_ORACLE","expectation":"DO_NOT_SEND_ORACLE","reason":"DO_NOT_SEND_ORACLE"]
+        },options:[.sortedKeys])
+        try caseData.write(to:group.appendingPathComponent("cases.json"))
+        let manifest:[String:Any]=[
+            "schema":1,"buildCommit":String(repeating:"1",count:40),
+            "catalog":["path":"catalog.json","sha256":ReviewedAnswerCatalog.sha256(ReviewedAnswerTests.fixtureData)],
+            "cases":["path":"cases.json","sha256":ReviewedAnswerCatalog.sha256(caseData)],
+            "sources":[["sourceID":source.id,"path":"source.md","sha256":source.sha256]],
+            "units":[["id":answer.id,"digest":answer.contentDigest]],
+            "modes":["isolated","rolling"],"resultPath":"result.jsonl"]
+        let manifestURL=group.appendingPathComponent("manifest.json")
+        try JSONSerialization.data(withJSONObject:manifest,options:[.sortedKeys]).write(to:manifestURL)
+        let prepared=try ReviewedSelectorInput.prepare(manifestURL:manifestURL,allowedRoot:root)
+        check("selector execution prepares exact signed source/case files",prepared.files.count==4 && prepared.snapshot.answers.count==1)
+        let journal=try ReviewedSelectorJournal(url:prepared.resultURL,header:["type":"header","diagnostic":"fictional-execution"],expectedRows:4)
         let defaults=UserDefaults.standard,prior=UserDefaults.standard.volatileDomain(forName:UserDefaults.argumentDomain)
         var settings=prior
         settings["copilotProvider"]="claude";settings["onDeviceOnly"]=false
@@ -62,7 +77,9 @@ enum ReviewedSelectorExecutionChecks {
                 capture.record($0,invocationID:invocation)
             })
             return SwitchingAnalysisProvider(claude:claude,localCompatible:OpenAICompatibleProvider(session:session,kindSource:{.ollama}))
-        },record:{rows.append($0)})
+        },record:{try journal.append($0);rows.append($0)})
+        let receipt=try journal.finish()
+        check("selector execution actual prepared provider loop journal verifies",receipt.rows==4 && ReviewedSelectorJournal.verifies(receipt,at:prepared.resultURL))
         check("selector execution one sequential row per case and mode",rows.count==4 && factories==4 &&
               rows.map(\.caseID)==["fixture-case-a","fixture-case-b","fixture-case-a","fixture-case-b"] &&
               rows.map(\.mode)==["isolated","isolated","rolling","rolling"])
@@ -75,7 +92,8 @@ enum ReviewedSelectorExecutionChecks {
               rows[0].reply==answer.reply && rows[0].source==source.name &&
               rows[0].evidence.first?.text==answer.evidence[0].quote)
         check("selector execution fallback never borrows prior selected unit",
-              rows.dropFirst().allSatisfy{!$0.outputMatchesObservedUnit && $0.selectedUnitDigest==nil})
+              rows.dropFirst().allSatisfy{!$0.outputMatchesObservedUnit && $0.selectedUnitDigest==nil &&
+                  $0.reply==ClaudeAnalysisProvider.reviewedUncertaintyReply && $0.source==nil && $0.evidence.isEmpty})
         check("selector execution every row remains unscored",rows.allSatisfy{$0.semanticStatus=="unscored" && !$0.nativeAcceptance})
         check("selector execution uses actual production mock transport",ReviewedMockProtocol.requests.count==4)
         let payloads=try ReviewedMockProtocol.bodies.map { data -> [String:Any] in
@@ -91,6 +109,6 @@ enum ReviewedSelectorExecutionChecks {
               conversations[3].contains(cases[0].question))
         let sent=ReviewedMockProtocol.bodies.map{String(decoding:$0,as:UTF8.self)}.joined()
         check("selector execution never serializes local case identities or score keys",
-              !sent.contains("fixture-case-") && !sent.contains("expected_unit") && !sent.contains("review_required") && !sent.contains("semanticStatus"))
+              !sent.contains("fixture-case-") && !sent.contains("DO_NOT_SEND_ORACLE") && !sent.contains("expected_unit") && !sent.contains("review_required") && !sent.contains("semanticStatus"))
     }
 }

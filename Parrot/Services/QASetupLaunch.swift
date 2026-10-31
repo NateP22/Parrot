@@ -9,7 +9,7 @@ enum QASetupLaunch {
         let options = Array(arguments.dropFirst())
         if AnswerTraceRecorder.isAllowed(bundleID: bundleID, flag: flag),
            defaultFlag != nil, boolean(defaultFlag) == nil { return .rejected }
-        guard options.contains("--qa-setup") || options.contains("--qa-setup-self-check") else {
+        guard options.contains("--qa-setup") || options.contains("--qa-setup-self-check") || options.contains("--reviewed-selector-eval") else {
             if AnswerTraceRecorder.isAllowed(bundleID: bundleID, flag: flag),
                boolean(defaultFlag) == true {
                 if boolean(nextLaunch) == false { return .normal }
@@ -21,8 +21,10 @@ enum QASetupLaunch {
         }
         let ownerProbe = options.count == 3 && options[0] == "--qa-setup" &&
             options[1] == "--qa-setup-self-check" && ["speech","speakers","local","embedding"].contains(options[2])
+        let selectorProbe = options.count == 3 && options[0] == "--qa-setup" &&
+            options[1] == "--reviewed-selector-eval" && options[2].hasPrefix("/")
         guard AnswerTraceRecorder.isAllowed(bundleID: bundleID, flag: flag),
-              options == ["--qa-setup"] || options == ["--qa-setup", "--qa-setup-self-check"] || ownerProbe else { return .rejected }
+              options == ["--qa-setup"] || options == ["--qa-setup", "--qa-setup-self-check"] || ownerProbe || selectorProbe else { return .rejected }
         return .settingsOnly
     }
     static let bundleID = "com.uygar.parrot.sat54.qa"

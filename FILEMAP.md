@@ -72,7 +72,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ProfileTest+ReviewedSelectorInput.swift` | 145 | Actual signed fictional fixture, inventory/size/path/hash/symlink regressions; component-only |
 | `Parrot/ReviewedSelectorJournal.swift` | 115 | Exclusive0600 bounded private results; sticky failures and synchronized hash/count completion receipt; footer alone never certifies success |
 | `Parrot/ProfileTest+ReviewedSelectorJournal.swift` | 95 | File creation, partial-run, injected final-sync and exact completion-receipt regressions; no real disk fault/native proof |
-| `Parrot/ReviewedSelectorEval.swift` | 30 | Exact-QA no-audio selector diagnostic interface; TEST_ONLY stub until actual loop behavioral RED and repair |
+| `Parrot/ReviewedSelectorEval.swift` | 170 | Exact-QA setup-only frozen signed/source selector diagnostic; runtime build match, sequential normal Switching/Claude, unscored results and mandatory returned-receipt readback; no audio/native proof |
 | `Parrot/ProfileTest+ReviewedSelectorExecution.swift` | 110 | Actual Switching/Claude fictional mock loop, isolated/rolling question identity, typed outcomes and unscored records |
 | `Parrot/ProfileTest+ReviewedSelectorEval.swift` | 110 | Fictional response/correlation/duplicate-key diagnostic regressions; no provider calls, key access or native answer proof |
 | `Parrot/QASetupSelfCheck.swift` | 55 | Bundled --qa-setup --qa-setup-self-check exercises actual disabled speech/diarization/Ollama/embedding owners; component-only, no keys/audio/store |

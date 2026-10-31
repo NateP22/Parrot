@@ -20,6 +20,13 @@ enum ReviewedSelectorJournalChecks {
                 let receipt=try journal.finish()
                 let completed=try Data(contentsOf:output)
                 check("selector journal completion receipt binds exact persisted bytes",receipt.rows==1 && receipt.bytes==completed.count && receipt.sha256==SHA256.hash(data:completed).map{String(format:"%02x",$0)}.joined())
+                check("selector completion verifier accepts actual successful receipt",ReviewedSelectorJournal.verifies(receipt,at:output))
+                var tampered=completed;tampered[0] ^= 1
+                try tampered.write(to:output)
+                check("selector completion verifier rejects same-length file tamper",!ReviewedSelectorJournal.verifies(receipt,at:output))
+                try completed.write(to:output)
+                let wrong=ReviewedSelectorJournal.Completion(rows:receipt.rows,bytes:receipt.bytes,sha256:String(repeating:"0",count:64))
+                check("selector completion verifier rejects wrong expected hash",!ReviewedSelectorJournal.verifies(wrong,at:output))
                 let lines=String(decoding:completed,as:UTF8.self).split(separator:"\n")
                 let footer=try JSONSerialization.jsonObject(with:Data(lines.last!.utf8)) as? [String:Any]
                 check("selector journal completes with exact count and unscored footer",lines.count==3 && footer?["type"] as? String=="footer" && footer?["rows"] as? Int==1 && footer?["complete"] as? Bool==true && footer?["nativeAcceptance"] as? Bool==false && footer?["scored"] as? Bool==false)

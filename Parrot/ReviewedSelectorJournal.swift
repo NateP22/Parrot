@@ -7,6 +7,44 @@ import CryptoKit
 final class ReviewedSelectorJournal {
     enum Failure: Error { case invalidInput, unavailable, closed, tooLarge }
     struct Completion: Encodable { let rows:Int; let bytes:Int; let sha256:String }
+    /// Readback gate for a receipt returned by finish(), never proof of its
+    /// origin, semantic accuracy, provider authentication or native delivery.
+    static func verifies(_ receipt:Completion,at url:URL) -> Bool {
+        guard (1...256).contains(receipt.rows),(1...16_777_216).contains(receipt.bytes),
+              receipt.sha256.range(of:"^[0-9a-f]{64}$",options:.regularExpression) != nil,
+              url.isFileURL,url.path==url.standardizedFileURL.path,
+              url.path==url.resolvingSymlinksInPath().path else { return false }
+        let fd=open(url.path,O_RDONLY|O_NOFOLLOW|O_NONBLOCK|O_CLOEXEC)
+        guard fd >= 0 else { return false };defer { close(fd) }
+        var first=stat(),last=stat(),named=stat()
+        guard fstat(fd,&first)==0,(first.st_mode & mode_t(S_IFMT))==mode_t(S_IFREG),
+              first.st_mode & 0o777==0o600,first.st_size==receipt.bytes else { return false }
+        var data=Data(),buffer=[UInt8](repeating:0,count:65_536)
+        data.reserveCapacity(receipt.bytes)
+        while true {
+            let count=buffer.withUnsafeMutableBytes { Darwin.read(fd,$0.baseAddress,min($0.count,receipt.bytes+1-data.count)) }
+            if count < 0 && errno==EINTR { continue }
+            guard count >= 0 else { return false }
+            if count==0 { break }
+            data.append(contentsOf:buffer.prefix(count))
+            guard data.count<=receipt.bytes else { return false }
+        }
+        guard fstat(fd,&last)==0,lstat(url.path,&named)==0,data.count==receipt.bytes,
+              first.st_dev==last.st_dev,first.st_ino==last.st_ino,last.st_size==receipt.bytes,
+              last.st_dev==named.st_dev,last.st_ino==named.st_ino,
+              first.st_mtimespec.tv_sec==last.st_mtimespec.tv_sec,
+              first.st_mtimespec.tv_nsec==last.st_mtimespec.tv_nsec,
+              SHA256.hash(data:data).map({String(format:"%02x",$0)}).joined()==receipt.sha256 else { return false }
+        let lines=data.split(separator:10,omittingEmptySubsequences:false)
+        guard lines.count==receipt.rows+3,lines.last?.isEmpty==true,
+              lines.dropLast().allSatisfy({!$0.isEmpty}),
+              let footer=(try? JSONSerialization.jsonObject(with:Data(lines[lines.count-2]))) as? [String:Any],
+              Set(footer.keys)==Set(["type","complete","nativeAcceptance","scored","rows"]),
+              footer["type"] as? String=="footer",footer["complete"] as? Bool==true,
+              footer["nativeAcceptance"] as? Bool==false,footer["scored"] as? Bool==false,
+              footer["rows"] as? Int==receipt.rows else { return false }
+        return true
+    }
     private var descriptor: Int32 = -1
     private let expectedRows: Int
     private let url:URL
