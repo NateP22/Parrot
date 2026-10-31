@@ -31,6 +31,9 @@ enum ProfileTest {
         testClaudeModelConfiguration()
         QASetupChecks.run { check($0, $1) }
         ReviewedSelectorObservationChecks.run { check($0, $1) }
+        ReviewedSelectorInputChecks.run { check($0, $1) }
+        ReviewedSelectorJournalChecks.run { check($0, $1) }
+        ReviewedSelectorExecutionChecks.runSync { check($0, $1) }
         testGroundedAnswerGuard()
         testEvidenceReviewTransport()
         testDocumentAnswerDelivery()

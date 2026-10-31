@@ -1011,6 +1011,10 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
             } catch is CancellationError { throw CancellationError() }
             catch { response = nil }
         }
+        if let reviewedResponseObserver {
+            reviewedResponseObserver(ReviewedSelectorObservation.inspect(response,
+                allowedAnswerIDs: Set(entries.map(\.id))))
+        }
         let draft = Self.reviewedAnswerDraft(from: response, request: request,
             catalog: catalog, candidates: candidates)
         return AnalysisResult(insights: [draft], sentiment: [:], read: nil, coach: nil, resolved: [])
