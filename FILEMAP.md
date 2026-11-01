@@ -61,6 +61,8 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/CloudTranscription.swift` | 452 | Opt-in Groq (batch) and Deepgram (streaming; finals carry the words' spoken span) backends + WAV encode; `TranscriptPolisher`: the post-call Groq re-decode, which skips Me lines the echo gate calls echo |
 | `Services/DiarizationEngine.swift` | 156 | FluidAudio pyannote diarization (CoreML): labels + per-speaker embeddings; whole file or a live 60 s tail |
 | `Services/AnalysisProvider.swift` | 1501 | Claude Haiku 5.5; signed whole-reply ID selection, strict source/reviewer guards, original evidence and report receipts |
+| `Services/QACredentialProbePolicy.swift` | 25 | Exact QA setup-only credential command, canonical UUID, fixed non-provider account/public fixture namespace |
+| `QACredentialProbe.swift` | 145 | QA-only non-secret write/verify-cleanup/absence phases through actual APIKeyStore; dual UI refusal, bounded reports/timeouts; no provider/audio/store |
 | `Services/AnswerTrace.swift` | 260 | Explicit stable-QA-only bounded diagnostic journal, integer Mach clock, immutable question/request/insight bindings; no raw text or visible-frame/native acceptance claim |
 | `Services/AnswerAudioTrace.swift` | 180 | Stable-QA raw capture clocks and emitted sample/padding provenance; bounded session journal, calibration and actual file mapping remain unverified |
 | `Services/AnswerFrameTrace.swift` | 145 | QA own-window frame ownership/clock/geometry/retention policy; bounded callback journal never grants native visibility acceptance |
@@ -197,6 +199,10 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/assemble-help.sh` | Builds the Apple Help Book into the .app from `docs/help/` (both builders call it) |
 | `scripts/catalog-sign.swift` | Local Ed25519 artifact signer; private key stays outside source/CI/vault; requires an approved payload hash before signing |
 | `scripts/build-local-candidate.sh` | Private-test Mac CI build: full harness, stable isolated QA identity/service, persistent QA keys, updates off, architecture/signature/archive/startup receipts; ad-hoc update continuity requires native proof |
+| `scripts/run-native-credential-probe.py` | Artifact-qualified three-process synthetic Keychain component proof; private durable pending nonce/checkpoints, bounded child output, explicit same-artifact recovery |
+| `scripts/test-native-credential-runner.py` | Runner ordering/identity/recovery/privacy/cleanup checks and fictional child timeout/reaping; no real credentials |
+| `scripts/test-native-credential-probe.py` | Actual phase/report code with link-fenced mock Security calls, plus Swift JSON to real Python validator contract |
+| `scripts/test-qa-credential-admission.py` | Compiled actual launch/parser admission and existing strict QA setup regressions; no Keychain or models |
 | `scripts/native_answer_qualification.py` | Offline per-trial acoustic-to-visible calculation on independently reviewed evidence; exact integer uncertainty/deadline/identity/first-answer gates; never authenticates evidence or grants native acceptance |
 | `scripts/test-native-answer-qualification.py` | Synthetic timing, wrong-first, visibility, plainness and bounded-file parser regressions; no app/audio/provider access |
 | `integrations/claude-plugin/` | Claude plugin for the connector directory: `.mcp.json` + `server/launch.sh` (same launcher as the release `.mcpb`, harness-checked), seven skills mirroring the MCP prompts, README, PRIVACY |

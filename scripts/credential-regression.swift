@@ -1,25 +1,32 @@
 import Foundation
 import Security
+import LocalAuthentication
 
 // These module-local functions replace the imported C API at compile time.
 // All records are deliberately fake; no Security API is forwarded to macOS.
 var records: [String: Data] = [:]
 var blockedReads: [String: OSStatus] = [:]
 var failedWrites: Set<String> = []
+var raceOnAdd: [String: Data] = [:]
 var failedDeletes: Set<String> = []
 var reads: [String: Int] = [:]
 var deletions: [String: Int] = [:]
 var additions: [String: Int] = [:]
 var updates: [String: Int] = [:]
 var services: [String] = []
+var dataRequests: [String: [Bool]] = [:]
+var interactionRequests: [Bool?] = []
 
 func account(_ query: CFDictionary) -> String {
+    let context = (query as NSDictionary)[kSecUseAuthenticationContext] as? LAContext
+    interactionRequests.append(context?.interactionNotAllowed)
     services.append((query as NSDictionary)[kSecAttrService] as! String)
     return (query as NSDictionary)[kSecAttrAccount] as! String
 }
 func SecItemCopyMatching(_ query: CFDictionary, _ output: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
     let name = account(query)
     reads[name, default: 0] += 1
+    dataRequests[name, default: []].append((query as NSDictionary)[kSecReturnData] as? Bool ?? false)
     if let status = blockedReads[name] { return status }
     guard let value = records[name] else { return errSecItemNotFound }
     output?.pointee = value as NSData
@@ -35,6 +42,7 @@ func SecItemAdd(_ query: CFDictionary, _ output: UnsafeMutablePointer<CFTypeRef?
     let name = account(query)
     additions[name, default: 0] += 1
     if failedWrites.contains(name) { return errSecAuthFailed }
+    if let raced = raceOnAdd.removeValue(forKey: name) { records[name] = raced }
     if records[name] != nil { return errSecDuplicateItem }
     records[name] = (query as NSDictionary)[kSecValueData] as? Data
     return errSecSuccess
@@ -54,10 +62,21 @@ func check(_ name: String, _ condition: @autoclosure () -> Bool) {
     else { print("FAIL \(name)"); failures += 1 }
 }
 
+if CommandLine.arguments.contains("--no-ui-tests") {
+    check("noninteractive metadata reports absence", APIKeyStore.metadataStatus(account:"no-ui",allowInteraction:false)==errSecItemNotFound)
+    check("noninteractive atomic add succeeds", APIKeyStore.save("public-no-ui",account:"no-ui",replaceExisting:false,allowInteraction:false))
+    records["no-ui-load"]=Data("public-no-ui".utf8)
+    check("noninteractive uncached load succeeds", APIKeyStore.load(account:"no-ui-load",allowInteraction:false)=="public-no-ui")
+    check("noninteractive delete succeeds", APIKeyStore.delete(account:"no-ui",allowInteraction:false))
+    check("every noninteractive item query has a no-UI context", interactionRequests.count==4 && interactionRequests.allSatisfy { $0==true })
+    exit(failures==0 ? 0:1)
+}
+
 if CommandLine.arguments.contains("--invalid-service-tests") {
     check("invalid QA metadata rejects save", !APIKeyStore.save("dummy-isolation", account: "isolated"))
     check("invalid QA metadata cannot load", APIKeyStore.load(account: "isolated") == nil)
     APIKeyStore.delete(account: "isolated")
+    check("invalid service metadata is unavailable rather than absent", APIKeyStore.metadataStatus(account: "isolated") == errSecNotAvailable)
     check("invalid QA metadata makes zero Security calls", services.isEmpty)
     print(failures == 0 ? "ALL INVALID SERVICE REGRESSIONS PASS" : "INVALID SERVICE REGRESSION FAILURES: \(failures)")
     exit(failures == 0 ? 0 : 1)
@@ -84,8 +103,11 @@ if CommandLine.arguments.contains("--session-only-tests") {
     check("session starts without a key", APIKeyStore.load(account: "session") == nil)
     check("session key can be supplied", APIKeyStore.save("dummy-session", account: "session"))
     check("session key can be used", APIKeyStore.load(account: "session") == "dummy-session")
+    check("session create-only cannot replace a key", !APIKeyStore.save("dummy-other", account: "session", replaceExisting: false))
+    check("session collision preserves its key", APIKeyStore.load(account: "session") == "dummy-session")
     APIKeyStore.delete(account: "session")
     check("session key can be cleared", APIKeyStore.load(account: "session") == nil)
+    check("session metadata cannot claim real persistence", APIKeyStore.metadataStatus(account: "session") == errSecNotAvailable)
     check("session mode makes zero Security calls", reads.isEmpty && additions.isEmpty && updates.isEmpty && deletions.isEmpty)
     check("session mode persists no credential", records.isEmpty)
     print(failures == 0 ? "ALL SESSION CREDENTIAL REGRESSIONS PASS" : "SESSION CREDENTIAL REGRESSION FAILURES: \(failures)")
@@ -125,7 +147,31 @@ check("failed delete preserves cached original", APIKeyStore.load(account: "dele
 blockedReads.removeValue(forKey: "denied")
 check("explicit successful save recovers blocked account", APIKeyStore.save("dummy-recovered", account: "denied") && APIKeyStore.load(account: "denied") == "dummy-recovered")
 
+records["metadata-uncached"] = Data("public-metadata-fixture".utf8)
+_ = APIKeyStore.load(account: "metadata-uncached")
+check("metadata sees an existing record", APIKeyStore.metadataStatus(account: "metadata-uncached") == errSecSuccess)
+records.removeValue(forKey: "metadata-uncached")
+check("metadata bypasses cached credential after removal", APIKeyStore.metadataStatus(account: "metadata-uncached") == errSecItemNotFound)
+check("metadata only requests attributes, never password data", dataRequests["metadata-uncached"] == [true,false,false])
+blockedReads["metadata-blocked"] = errSecInteractionNotAllowed
+check("metadata permission refusal is not reported as absent", APIKeyStore.metadataStatus(account: "metadata-blocked") == errSecInteractionNotAllowed)
+check("metadata refusal requested no password data", dataRequests["metadata-blocked"] == [false])
+records["delete-status"] = Data("public-delete-fixture".utf8)
+failedDeletes.insert("delete-status")
+check("delete exposes a real failure", APIKeyStore.delete(account: "delete-status") == false)
+failedDeletes.remove("delete-status")
+check("delete exposes a successful removal", APIKeyStore.delete(account: "delete-status") == true)
+check("delete missing item is successful cleanup", APIKeyStore.delete(account: "delete-status") == true)
+check("probe metadata starts absent", APIKeyStore.metadataStatus(account: "create-only-race") == errSecItemNotFound)
+records["create-only-race"] = Data("public-foreign-collision".utf8)
+check("create-only save rejects a concurrent collision", !APIKeyStore.save("public-probe", account: "create-only-race", replaceExisting: false))
+check("create-only save preserves the concurrent entry", records["create-only-race"] == Data("public-foreign-collision".utf8))
+check("create-only save never invokes update or delete", updates["create-only-race", default:0] == 0 && deletions["create-only-race", default:0] == 0)
+check("create-only save adds a missing entry", APIKeyStore.save("public-probe", account: "create-only-new", replaceExisting: false))
+check("create-only new entry does not use update", updates["create-only-new", default:0] == 0 && additions["create-only-new"] == 1)
+
 let expectedService = Bundle.main.object(forInfoDictionaryKey: "ParrotKeychainService") as? String ?? "com.uygar.parrot"
+check("normal calls preserve the existing interaction query policy", interactionRequests.allSatisfy { $0==nil })
 check("all Security operations stay in the configured service", !services.isEmpty && services.allSatisfy { $0 == expectedService })
 
 print(failures == 0 ? "ALL CREDENTIAL REGRESSIONS PASS" : "CREDENTIAL REGRESSION FAILURES: \(failures)")

@@ -55,5 +55,13 @@ enum QASetupChecks {
         check("QA selector evaluator refuses mixed capture", mode(evaluator+["--capture-test"]) == .rejected)
         check("QA selector evaluator refuses reordered command", mode([evaluator[1],evaluator[0],evaluator[2]]) == .rejected)
         check("QA selector evaluator refuses repeated command", mode(evaluator+["--reviewed-selector-eval"]) == .rejected)
+        let nonce = "01234567-89AB-4CDE-8FAB-0123456789AB"
+        for phase in ["write", "verify-cleanup", "absent"] {
+            let probe = ["--qa-setup", "--qa-credential-probe", phase, nonce]
+            check("QA credential probe stays in setup " + phase, mode(probe,boot:true,next:false) == .settingsOnly)
+            check("QA credential probe refuses original " + phase, mode(probe,"com.uygar.parrot") == .rejected)
+        }
+        check("QA credential probe refuses account instead of UUID", mode(["--qa-setup","--qa-credential-probe","write","claude-api-key"]) == .rejected)
+        check("QA credential probe refuses missing setup", mode(["--qa-credential-probe","write",nonce]) == .rejected)
     }
 }

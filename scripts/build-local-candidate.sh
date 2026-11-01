@@ -5,6 +5,9 @@ mkdir -p build-evidence
 swift --version | tee build-evidence/toolchain.txt
 xcodebuild -version | tee -a build-evidence/toolchain.txt
 python3 scripts/test-keychain-store.py | tee build-evidence/credentials.log
+python3 scripts/test-qa-credential-admission.py 2>&1 | tee build-evidence/credential-admission.log
+python3 scripts/test-native-credential-probe.py 2>&1 | tee build-evidence/credential-probe-components.log
+python3 scripts/test-native-credential-runner.py 2>&1 | tee build-evidence/credential-runner-components.log
 python3 scripts/test-qa-bundle-policy.py 2>&1 | tee build-evidence/qa-bundle-policy.log
 python3 scripts/test-native-answer-qualification.py 2>&1 | tee build-evidence/native-answer-qualification.log
 bash scripts/test-microphone-input.sh | tee build-evidence/microphone-format.log
@@ -38,6 +41,7 @@ p['ParrotKeychainService'] = test_id
 p['ParrotSessionOnlyCredentials'] = False
 p['ParrotNativeAnswerTrace'] = True
 p['ParrotQASetupByDefault'] = True
+p['ParrotQACredentialProbeVersion'] = 1
 p['SUEnableAutomaticChecks'] = False
 p['SUAutomaticallyUpdate'] = False
 p.pop('SUFeedURL', None)
@@ -91,3 +95,19 @@ with Path('build-evidence/qa-setup-model-owners.log').open('w') as output:
         raise SystemExit('QA setup model-owner checks failed: ' + repr(results))
 PY
 tail -1 build-evidence/qa-setup-model-owners.log
+
+# Actual non-secret, fresh-process Keychain persistence and cleanup on this
+# runner. This is component evidence only, never local-Mac or answer acceptance.
+python3 - <<'PY'
+from pathlib import Path
+import hashlib
+import subprocess
+binary=Path('dist/Parrot.app/Contents/MacOS/Parrot').absolute()
+sha=hashlib.sha256(binary.read_bytes()).hexdigest()
+source=Path('build-evidence/source-commit.txt').read_text().strip()
+with Path('build-evidence/native-credential-component.json').open('w') as output:
+    result=subprocess.run(['python3','scripts/run-native-credential-probe.py',str(binary),
+                           '--expected-binary-sha256',sha,'--expected-source',source],
+                          stdout=output,timeout=120)
+    result.check_returncode()
+PY

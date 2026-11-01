@@ -1,6 +1,7 @@
 import Foundation
 import os
 import Security
+import LocalAuthentication
 
 /// Raw insight returned by a provider; the engine attaches call timing.
 struct InsightDraft {
@@ -1453,21 +1454,35 @@ enum APIKeyStore {
     /// ponytail: a key changed outside the app (`security` CLI) shows after relaunch.
     private static let cache = OSAllocatedUnfairLock(initialState: [String: String?]())
 
+    // The QA probe suppresses modern authentication UI per query as well as
+    // the legacy process switch. Normal app calls keep their existing policy.
+    private static func interactionPolicy(_ query: [String: Any], allowInteraction: Bool) -> [String: Any] {
+        guard !allowInteraction else { return query }
+        var result = query
+        let context = LAContext()
+        context.interactionNotAllowed = true
+        result[kSecUseAuthenticationContext as String] = context
+        return result
+    }
+
     /// Returns false if the keychain rejected the write — the UI must say so,
     /// or the user believes the key is saved and every call fails "missing key".
     @discardableResult
-    static func save(_ key: String, account: String = "claude-api-key") -> Bool {
+    static func save(_ key: String, account: String = "claude-api-key", replaceExisting: Bool = true, allowInteraction: Bool = true) -> Bool {
         guard !key.isEmpty, let data = key.data(using: .utf8) else { return false }
+        if !replaceExisting { return createIfAbsent(key, account: account, allowInteraction: allowInteraction) == errSecSuccess }
         if isSessionOnly {
-            cache.withLock { _ = $0.updateValue(key, forKey: account) }
-            return true
+            return cache.withLock {
+                $0.updateValue(key, forKey: account)
+                return true
+            }
         }
         guard let service else { return false }
-        let query: [String: Any] = [
+        let query = interactionPolicy([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-        ]
+        ], allowInteraction: allowInteraction)
         let attributes = [kSecValueData as String: data]
         let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
         if status == errSecItemNotFound {
@@ -1481,13 +1496,36 @@ enum APIKeyStore {
         return true
     }
 
+    /// Atomic creation: preserve duplicate versus uncertain failure so the QA
+    /// runner never cleans a collision that this run did not create.
+    static func createIfAbsent(_ key: String, account: String, allowInteraction: Bool = true) -> OSStatus {
+        guard !key.isEmpty, let data = key.data(using: .utf8) else { return errSecParam }
+        if isSessionOnly {
+            return cache.withLock {
+                if let existing = $0[account], existing != nil { return errSecDuplicateItem }
+                $0.updateValue(key, forKey: account)
+                return errSecSuccess
+            }
+        }
+        guard let service else { return errSecNotAvailable }
+        let item = interactionPolicy([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecValueData as String: data,
+        ], allowInteraction: allowInteraction)
+        let status = SecItemAdd(item as CFDictionary, nil)
+        if status == errSecSuccess { cache.withLock { _ = $0.updateValue(key, forKey: account) } }
+        return status
+    }
+
     /// `load` off the main thread. A Keychain read can wait on a macOS
     /// "allow access?" prompt, and on the main actor that freezes the window.
     static func loadInBackground(account: String = "claude-api-key") async -> String? {
         await Task.detached { load(account: account) }.value
     }
 
-    static func load(account: String = "claude-api-key") -> String? {
+    static func load(account: String = "claude-api-key", allowInteraction: Bool = true) -> String? {
         // The logic harness must stay hermetic: reading the app's keychain
         // item from an ad-hoc dev binary makes securityd pop a consent dialog
         // and block forever when nobody clicks it (bit us: --profile-test
@@ -1500,13 +1538,13 @@ enum APIKeyStore {
         // for a missing key in a locked legacy keychain can display a prompt.
         if isSessionOnly { return nil }
         guard let service else { return nil }
-        let query: [String: Any] = [
+        let query = interactionPolicy([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
+        ], allowInteraction: allowInteraction)
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         // A declined/locked read must not make every UI refresh ask again.
@@ -1519,19 +1557,37 @@ enum APIKeyStore {
         return key
     }
 
-    static func delete(account: String = "claude-api-key") {
-        if isSessionOnly {
-            cache.withLock { _ = $0.updateValue(nil, forKey: account) }
-            return
-        }
-        guard let service else { return }
-        let query: [String: Any] = [
+    /// Uncached metadata only: permission errors are never converted to absence.
+    static func metadataStatus(account: String, allowInteraction: Bool = true) -> OSStatus {
+        let args = ProcessInfo.processInfo.arguments
+        guard !args.contains("--profile-test"), !args.contains("--help-shots"),
+              !isSessionOnly, let service else { return errSecNotAvailable }
+        let query = interactionPolicy([
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
-        ]
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ], allowInteraction: allowInteraction)
+        var attributes: CFTypeRef?
+        return SecItemCopyMatching(query as CFDictionary, &attributes)
+    }
+
+    @discardableResult
+    static func delete(account: String = "claude-api-key", allowInteraction: Bool = true) -> Bool {
+        if isSessionOnly {
+            cache.withLock { _ = $0.updateValue(nil, forKey: account) }
+            return true
+        }
+        guard let service else { return false }
+        let query = interactionPolicy([
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ], allowInteraction: allowInteraction)
         let status = SecItemDelete(query as CFDictionary)
-        guard status == errSecSuccess || status == errSecItemNotFound else { return }
+        guard status == errSecSuccess || status == errSecItemNotFound else { return false }
         cache.withLock { _ = $0.updateValue(nil, forKey: account) }
+        return true
     }
 }

@@ -11,6 +11,9 @@ struct ParrotMain {
             fputs("QA setup requires the verified QA app and cannot be combined with another command.\n", stderr)
             exit(2)
         }
+        if args.contains("--qa-credential-probe") {
+            QACredentialProbe.run()
+        }
         if args.contains("--qa-setup-self-check") {
             MainActor.assumeIsolated { QASetupSelfCheck.run() }
             return

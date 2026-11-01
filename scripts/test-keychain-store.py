@@ -18,7 +18,7 @@ helper = source[source.index('enum APIKeyStore {'):]
 with tempfile.TemporaryDirectory(prefix='parrot-keychain-regression-') as temp:
     temp = Path(temp)
     (temp / 'APIKeyStoreUnderTest.swift').write_text(
-        'import Foundation\nimport Security\nimport os\n' + helper)
+        'import Foundation\nimport Security\nimport LocalAuthentication\nimport os\n' + helper)
     (temp / 'main.swift').write_text((root / 'scripts/credential-regression.swift').read_text())
     binary = temp / 'credential-tests'
     subprocess.run(['swiftc', '-swift-version', '5', str(temp / 'APIKeyStoreUnderTest.swift'),
@@ -56,6 +56,7 @@ with tempfile.TemporaryDirectory(prefix='parrot-keychain-regression-') as temp:
         print('Configuration: ' + label, flush=True)
         status |= subprocess.run([str(executable)] + arguments).returncode
         if label == 'qa-persistent':
+            status |= subprocess.run([str(executable), '--no-ui-tests']).returncode
             env = dict(os.environ, PARROT_TEST_FAKE_STORE=str(temp / 'synthetic-security-boundary.json'))
             for phase in ['write', 'read']:
                 status |= subprocess.run([str(executable), '--persistence-phase', phase], env=env).returncode
