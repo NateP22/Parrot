@@ -1,5 +1,6 @@
 import Foundation
 import Darwin
+import Security
 
 /// Exact-QA, no-audio production-selector diagnostic; never scores native answers.
 enum ReviewedSelectorEval {
@@ -153,7 +154,14 @@ enum ReviewedSelectorEval {
         do { journal=try ReviewedSelectorJournal(url:prepared.resultURL,header:header,expectedRows:header.expectedRows) }
         catch { throw Failure.result }
         // Existing own-QA store only; no argv/env/clipboard/legacy retrieval.
-        guard let key=await APIKeyStore.loadInBackground(),!key.isEmpty else { throw Failure.key }
+        // Staged builds must refuse an inaccessible item without opening a
+        // password/ACL prompt. Both policies are confined to this CLI process.
+        guard SecKeychainSetUserInteractionAllowed(false)==errSecSuccess else { throw Failure.key }
+        var interaction=DarwinBoolean(true)
+        guard SecKeychainGetUserInteractionAllowed(&interaction)==errSecSuccess,
+              !interaction.boolValue else { throw Failure.key }
+        guard let key=await APIKeyStore.loadInBackground(account:"claude-api-key",allowInteraction:false),
+              !key.isEmpty else { throw Failure.key }
         try await execute(prepared:prepared,makeProvider:{ capture in
             let invocation=capture.invocationID
             let claude=ClaudeAnalysisProvider(keyProvider:{key},reviewedResponseObserver:{

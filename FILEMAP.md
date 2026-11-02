@@ -74,7 +74,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ProfileTest+ReviewedSelectorInput.swift` | 145 | Actual signed fictional fixture, inventory/size/path/hash/symlink regressions; component-only |
 | `Parrot/ReviewedSelectorJournal.swift` | 115 | Exclusive0600 bounded private results; sticky failures and synchronized hash/count completion receipt; footer alone never certifies success |
 | `Parrot/ProfileTest+ReviewedSelectorJournal.swift` | 95 | File creation, partial-run, injected final-sync and exact completion-receipt regressions; no real disk fault/native proof |
-| `Parrot/ReviewedSelectorEval.swift` | 170 | Exact-QA setup-only frozen signed/source selector diagnostic; runtime build match, sequential normal Switching/Claude, unscored results and mandatory returned-receipt readback; no audio/native proof |
+| `Parrot/ReviewedSelectorEval.swift` | 181 | Exact-QA setup-only frozen signed/source selector diagnostic; runtime build match, noninteractive own-service key read, sequential normal Switching/Claude, unscored results and mandatory returned-receipt readback; no audio/native proof |
 | `Parrot/ReviewedSelectorContext.swift` | 35 | Diagnostic-only question-isolated versus rolling context with bounded historical overlap merge; never changes live meeting selection |
 | `Parrot/ProfileTest+ReviewedSelectorContext.swift` | 40 | Literal previous/history, overlap, whitespace, negation and intentional-repeat regressions; component-only |
 | `Parrot/ProfileTest+ReviewedSelectorExecution.swift` | 110 | Actual Switching/Claude fictional mock loop, isolated/rolling question identity, typed outcomes and unscored records |
@@ -209,6 +209,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/run-native-credential-probe.py` | Artifact-qualified three-process synthetic Keychain component proof; private durable pending nonce/checkpoints, bounded child output, explicit same-artifact recovery |
 | `scripts/test-native-credential-runner.py` | Runner ordering/identity/recovery/privacy/cleanup checks and fictional child timeout/reaping; no real credentials |
 | `scripts/test-native-credential-probe.py` | Actual phase/report code with link-fenced mock Security calls, plus Swift JSON to real Python validator contract |
+| `scripts/test-selector-credential-policy.py` | Actual selector key-read block and background forwarding with link-fenced Security shims; refuses UI suppression failures, locked/missing own keys, preserves ordinary defaults; no real credentials |
 | `scripts/test-qa-credential-admission.py` | Compiled actual launch/parser admission and existing strict QA setup regressions; no Keychain or models |
 | `scripts/test-qa-window-reopen.py` | Compiled actual delegate reopen decisions with inert UI boundaries; nil-opener fallback, activation and duplicate-window regressions; not native window proof |
 | `scripts/native_answer_qualification.py` | Offline per-trial acoustic-to-visible calculation on independently reviewed evidence; exact integer uncertainty/deadline/identity/first-answer gates; never authenticates evidence or grants native acceptance |

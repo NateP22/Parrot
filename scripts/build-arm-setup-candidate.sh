@@ -16,7 +16,7 @@ swift --version | tee build-evidence/toolchain.txt
 xcodebuild -version | tee -a build-evidence/toolchain.txt
 for PARROT_FOCUSED_TEST in test-arm-setup-candidate.py test-arm-cross-candidate.py test-keychain-store.py \
  test-qa-credential-admission.py test-qa-window-reopen.py test-native-credential-probe.py \
- test-native-credential-runner.py test-qa-bundle-policy.py test-native-answer-qualification.py \
+ test-native-credential-runner.py test-selector-credential-policy.py test-qa-bundle-policy.py test-native-answer-qualification.py \
  test-microphone-input.sh; do
   case "$PARROT_FOCUSED_TEST" in
     *.py) python3 -B "scripts/$PARROT_FOCUSED_TEST" 2>&1 | tee "build-evidence/$PARROT_FOCUSED_TEST.log" ;;

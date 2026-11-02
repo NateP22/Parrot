@@ -1529,8 +1529,8 @@ enum APIKeyStore {
 
     /// `load` off the main thread. A Keychain read can wait on a macOS
     /// "allow access?" prompt, and on the main actor that freezes the window.
-    static func loadInBackground(account: String = "claude-api-key") async -> String? {
-        await Task.detached { load(account: account) }.value
+    static func loadInBackground(account: String = "claude-api-key", allowInteraction: Bool = true) async -> String? {
+        await Task.detached { load(account: account, allowInteraction: allowInteraction) }.value
     }
 
     static func load(account: String = "claude-api-key", allowInteraction: Bool = true) -> String? {

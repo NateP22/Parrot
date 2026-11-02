@@ -7,7 +7,7 @@ cross=importlib.util.module_from_spec(_spec);_spec.loader.exec_module(cross)
 QA="com.uygar.parrot.sat54.qa"
 FOCUSED=["test-arm-setup-candidate.py","test-arm-cross-candidate.py","test-keychain-store.py",
  "test-qa-credential-admission.py","test-qa-window-reopen.py","test-native-credential-probe.py",
- "test-native-credential-runner.py","test-qa-bundle-policy.py","test-native-answer-qualification.py",
+ "test-native-credential-runner.py","test-selector-credential-policy.py","test-qa-bundle-policy.py","test-native-answer-qualification.py",
  "test-microphone-input.sh"]
 def prepare_info(base,source,host,archs,build):
  if not isinstance(base,dict) or any(base.get(k)!=v for k,v in {
