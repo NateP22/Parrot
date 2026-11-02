@@ -12,7 +12,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ProfileTest.swift` | 6565 | --profile-test: grounding, imported-text fingerprints, signed-catalog boundary checks, source/report and urgent-question guards |
 | `Parrot/ProfileTest+ReviewedAnswers.swift` | 97 | Signed synthetic fixtures for catalog authenticity, exact text/hash/version, scope, malformed data and short-reply boundaries |
 | `Parrot/ProfileTest+ReviewedScope.swift` | 100 | Signed synthetic v2 authority/scope/form, forced wrong-ID, ambiguity, metadata-tamper and v1 persistence boundaries |
-| `Parrot/ProfileTest+ReviewedFormContext.swift` | 94 | Synthetic paired general/current-state classifier regressions for input adjectives, attached hypothetical consequences and owned style inputs |
+| `Parrot/ProfileTest+ReviewedFormContext.swift` | 132 | Fictional general/state, clause-local conditions, owned-input and quoted-content regressions |
 | `Parrot/ProfileTest+ReviewedScopeAliases.swift` | 90 | Signed synthetic alias bounds, actual catalog admission, compound partial-answer rejection and off-source topic preservation |
 | `Parrot/ProfileTest+ProfilePolicy.swift` | 240 | Gated actual-engine delivery tests: a live profile becoming strict discards stale general answers and requeues its question; unrelated profile edit control |
 | `Parrot/ProfileTest+NativeAcceptance.swift` | 180 | QA trace clock/policy/cap/session regressions and gated actual-engine repeated-question/context/redaction/insert checks; no native capture or timing acceptance |
@@ -60,7 +60,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/EngineRecommendation.swift` | 25 | The model a new install starts on: Parakeet only when every Mac language and past call fits its 25 |
 | `Services/CloudTranscription.swift` | 452 | Opt-in Groq (batch) and Deepgram (streaming; finals carry the words' spoken span) backends + WAV encode; `TranscriptPolisher`: the post-call Groq re-decode, which skips Me lines the echo gate calls echo |
 | `Services/DiarizationEngine.swift` | 156 | FluidAudio pyannote diarization (CoreML): labels + per-speaker embeddings; whole file or a live 60 s tail |
-| `Services/AnalysisProvider.swift` | 1501 | Claude Haiku 5.5; signed whole-reply ID selection, strict source/reviewer guards, original evidence and report receipts |
+| `Services/AnalysisProvider.swift` | 1601 | Claude Haiku 5.5; whole-reply selection with explicit conditional branches, strict source/state guards, original evidence and report receipts |
 | `Services/QACredentialProbePolicy.swift` | 25 | Exact QA setup-only credential command, canonical UUID, fixed non-provider account/public fixture namespace |
 | `QACredentialProbe.swift` | 145 | QA-only non-secret write/verify-cleanup/absence phases through actual APIKeyStore; dual UI refusal, bounded reports/timeouts; no provider/audio/store |
 | `Services/AnswerTrace.swift` | 260 | Explicit stable-QA-only bounded diagnostic journal, integer Mach clock, immutable question/request/insight bindings; no raw text or visible-frame/native acceptance claim |
@@ -88,7 +88,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/CallAnalysisEngine.swift` | 978 | Live Copilot; retrieval, cancellation/dedup, current reviewed-library scope revalidation before inserting a card |
 | `Services/JevDocMatcher.swift` | 175 | TypeSafe "Jev" client: one probability per KB chunk that it answers the question; same-issue verdicts for card dedup |
 | `Services/ReviewedAnswerCatalog.swift` | 301 | Authenticated complete reply library; pinned signature, source/unit identity, exact UTF-8 evidence, version and live document-scope checks |
-| `Services/ReviewedQuestionScope.swift` | 125 | Typed source authority, signed AND/OR phrase routing and supported question forms; conservative ambiguity/negation/quoted-question guards |
+| `Services/ReviewedQuestionScope.swift` | 270 | Typed source authority and AND/OR routing; clause-local leading/trailing control conditions with shared quote/state guards |
 | `Services/ReviewedAnswerStore.swift` | 66 | Durable reviewed-mode intent, signed-library validation, backup and atomic install/readback; missing or invalid libraries remain required on reopen |
 | `Services/KnowledgeBaseService.swift` | 774 | Local KB imports, text fingerprints, signed answer-library import/backup/readback, source-scope admission, hybrid retrieval |
 | `Services/ProfileStore.swift` | 300 | Persists and mutates `CallProfile`s; the one-time Profiles 2.0 migration (backup, sharing ids, restore point, report choice); import / apply / restore a `.parrotprofile` (privacy only tightens) |

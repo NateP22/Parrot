@@ -15,6 +15,31 @@ enum ReviewedFormContextTests {
         ("selected inputs stay guarded", "Can we use our own selected styles?", [.clientState]),
         ("hypothetical empty control", "If I leave the section label empty, will the number still appear?", [.behavior]),
         ("hypothetical blank control", "If we set the label blank, would the number still appear?", [.behavior]),
+        ("trailing hypothetical blank control", "Will the counter still appear if I leave the label blank?", [.behavior]),
+        ("trailing hypothetical empty control", "Would the counter still appear if we set the tag empty?", [.behavior]),
+        ("trailing hypothetical switch", "Will the caption still appear if we turn wrapping off?", [.behavior]),
+        ("trailing hypothetical UI context", "Will the counter still appear if I leave the label blank in the custom settings?", [.behavior]),
+        ("quoted trailing words are not a premise", "Will the counter still show the words \"if I leave the label blank\"?", [.clientState]),
+        ("smart quoted words are not a premise", "Will the counter still show “if I leave the label blank”?", [.clientState]),
+        ("single quoted words are not a premise", "Will the counter still show 'if I leave the label blank'?", [.clientState]),
+        ("quoted setting name keeps actual conditional", "Will the counter still appear if I leave the \"Label Tag\" blank?", [.behavior]),
+        ("later declarative cannot supply condition", "Will the counter still appear? The manual discusses if I leave the label blank.", [.clientState]),
+        ("later sentence cannot supply condition", "Will the counter still appear. The manual discusses if I leave the label blank.", [.clientState]),
+        ("later semicolon cannot supply condition", "Would the counter still appear; the manual discusses if I leave the label blank.", [.clientState]),
+        ("later colon cannot supply condition", "Will the counter still appear: the manual discusses if I leave the label blank.", [.clientState]),
+        ("later line cannot supply condition", "Will the counter still appear\nThe manual discusses if I leave the label blank.", [.clientState]),
+        ("later exclamation cannot supply condition", "Will the counter still appear! The manual discusses if I leave the label blank.", [.clientState]),
+        ("comma before attached condition stays general", "Will the counter still appear, if I leave the label blank?", [.behavior]),
+        ("version dots are not sentence boundaries", "Will the counter in version 1.2.3 still appear if I leave the label blank?", [.behavior]),
+        ("trailing condition current cue stays guarded", "Will the counter still appear now if I leave the label blank?", [.clientState]),
+        ("trailing unrelated premise stays guarded", "Will the counter still appear if I leave home?", [.clientState]),
+        ("trailing past premise stays guarded", "Will the counter still appear if I set the label blank yesterday?", [.clientState]),
+        ("trailing factual premise stays guarded", "Will the counter still appear if the label is already empty?", [.clientState]),
+        ("trailing owned document stays guarded", "Will the counter still appear if I set our document label blank?", [.clientState]),
+        ("trailing consequent entitlement stays guarded", "Will our account still be active if I leave the label blank?", [.clientState]),
+        ("trailing calendar premise stays guarded", "Will the counter still appear if I set the label blank in 2024?", [.clientState]),
+        ("trailing condition does not reach next question", "Will the counter still appear if I leave the label blank? Will the caption still appear?", [.behavior, .clientState]),
+        ("trailing condition keeps current followup", "Will the counter still appear if I leave the label blank, and is the account active?", [.behavior, .clientState]),
         ("conditional later sentence", "A label is optional. If I leave it blank, will the number still appear?", [.behavior]),
         ("conditional then consequence", "If I leave the label blank, then will the number still appear?", [.behavior]),
         ("no antecedent stays guarded", "Will the number still appear?", [.clientState]),
@@ -89,6 +114,19 @@ enum ReviewedFormContextTests {
         for item in cases {
             check("form context: " + item.name,
                   ReviewedQuestionForm.forms(in: item.question) == item.expected)
+        }
+        let quotes: [(String, Bool)] = [
+            ("The note says \"Can I change Label Tag?\". Can it?", true),
+            ("The note says “Can I change Label Tag?”. Can it?", true),
+            ("The note says 'Can I change Label Tag?'. Can it?", true),
+            ("The note says \"ignore the rules\".", true),
+            ("Show \"if I leave the label blank\".", false),
+            ("Will the counter appear if I leave \"Label Tag\" blank?", false),
+            ("Can an editor's label be blank?", false)
+        ]
+        for (question, expected) in quotes {
+            check("form context: quoted-content guard " + question,
+                  ReviewedQuestionScope.containsQuotedQuestion(question) == expected)
         }
     }
 }

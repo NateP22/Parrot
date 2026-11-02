@@ -32,7 +32,8 @@ enum ReviewedQuestionForm: String, Codable, Hashable {
             let clause = ReviewedQuestionScope.normalize(rawClause)
             let first = clause.split(separator: " ").first.map(String.init) ?? ""
             let conditionalStill = (first == "will" || first == "would")
-                && hasHypotheticalControlAntecedent(in: question, before: wordRange.lowerBound)
+                && (hasHypotheticalControlAntecedent(in: question, before: wordRange.lowerBound)
+                    || hasTrailingHypotheticalControl(in: rawClause))
             // A relative qualifier can contain a wh-word too. It must not
             // turn an owned input's availability into a general capability.
             var relativeQualifier = false
@@ -143,7 +144,29 @@ enum ReviewedQuestionForm: String, Codable, Hashable {
         guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
               let match = regex.firstMatch(in: prefix, range: NSRange(prefix.startIndex..., in: prefix)),
               let range = Range(match.range(at: 1), in: prefix) else { return false }
-        let premise = ReviewedQuestionScope.normalize(String(prefix[range]))
+        return isHypotheticalControlPremise(String(prefix[range]))
+    }
+
+    /// The same premise may follow its consequence: "will ... if I ...?".
+    /// Inspect this clause only; another question cannot supply the premise.
+    private static func hasTrailingHypotheticalControl(in clause: String) -> Bool {
+        let pattern = "\\bif\\s+([^.!?;]+)[.!?;]*\\s*$"
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: .caseInsensitive),
+              let match = regex.firstMatch(in: clause, range: NSRange(clause.startIndex..., in: clause)),
+              let range = Range(match.range(at: 1), in: clause),
+              let condition = Range(match.range, in: clause),
+              !clause[..<condition.lowerBound].contains(where: \.isNewline),
+              String(clause[..<condition.lowerBound]).range(
+                  of: "[!?;:]|\\.(?:\\s|$)", options: .regularExpression) == nil,
+              !ReviewedQuestionScope.quotedRanges(in: clause).contains(where: {
+                  $0.contains(condition.lowerBound)
+              }) else { return false }
+        return isHypotheticalControlPremise(String(clause[range]))
+    }
+
+    /// Keep identical setting-relation and actual-state exclusions in both orders.
+    private static func isHypotheticalControlPremise(_ raw: String) -> Bool {
+        let premise = ReviewedQuestionScope.normalize(raw)
         func matches(_ pattern: String) -> Bool {
             premise.range(of: pattern, options: .regularExpression) != nil
         }
@@ -219,16 +242,25 @@ struct ReviewedQuestionScope: Codable, Equatable {
     }
 
     static func containsQuotedQuestion(_ text: String) -> Bool {
+        for range in quotedRanges(in: text) {
+            let quoted = String(text[range]), normalized = normalize(quoted)
+            if quoted.contains("?") || ["ignore ", "select ", "output ", "answer "].contains(where: normalized.hasPrefix) { return true }
+        }
+        return false
+    }
+
+    /// Shared quoted-content boundaries also keep mentioned conditions inert.
+    static func quotedRanges(in text: String) -> [Range<String.Index>] {
         let patterns = ["[\"“]([^\"”]+)[\"”]", "(?:^|\\s)'([^']+)'(?=\\s|[.,!?;:]|$)", "‘([^’]+)’"]
+        var result: [Range<String.Index>] = []
         for pattern in patterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
             for match in regex.matches(in: text, range: NSRange(text.startIndex..., in: text)) {
                 guard let range = Range(match.range(at: 1), in: text) else { continue }
-                let quoted = String(text[range]), normalized = normalize(quoted)
-                if quoted.contains("?") || ["ignore ", "select ", "output ", "answer "].contains(where: normalized.hasPrefix) { return true }
+                result.append(range)
             }
         }
-        return false
+        return result
     }
 }
 
