@@ -44,6 +44,7 @@ jobs:
           python3 scripts/test-qa-bundle-policy.py
           python3 scripts/test-qa-window-reopen.py
           python3 -B scripts/test-arm-cross-candidate.py
+          python3 -B scripts/test-arm-setup-candidate.py
           python3 scripts/test-native-answer-qualification.py
 
       - name: Build (debug)

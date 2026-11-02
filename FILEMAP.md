@@ -203,6 +203,9 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/build-arm-cross-candidate.sh` | CI-only sequential wrapper after unchanged Intel full builder: separate ARM scratch/bin path, Makefile resources, verified QA policy, runtime signing and BUILD_ONLY archive; never executes ARM on Intel |
 | `scripts/prepare-arm-cross-candidate.py` | Host/target source and QA policy validation; actual ARM Mach-O/minOS/slices, embedded entitlements/runtime/signature and archive byte receipts; all ARM/native outcomes remain pending |
 | `scripts/test-arm-cross-candidate.py` | Synthetic policy/workspace/signature/archive rejection and wrapper CI-only checks; native tool boundaries are inert, not actual build/app proof |
+| `scripts/build-arm-setup-candidate.sh` | Separate CI-only Intel-host ARM setup BUILD_ONLY route: focused source tests then one ARM build; both full profiles remain pending |
+| `scripts/prepare-arm-setup-candidate.py` | Exact own-QA setup policy and immutable entitlements; actual ARM/security/archive receipts with full-profile/native outcomes explicitly pending |
+| `scripts/test-arm-setup-candidate.py` | Synthetic metadata/focused-log/workspace/security/archive boundaries; external native tools inert, no app acceptance |
 | `scripts/run-native-credential-probe.py` | Artifact-qualified three-process synthetic Keychain component proof; private durable pending nonce/checkpoints, bounded child output, explicit same-artifact recovery |
 | `scripts/test-native-credential-runner.py` | Runner ordering/identity/recovery/privacy/cleanup checks and fictional child timeout/reaping; no real credentials |
 | `scripts/test-native-credential-probe.py` | Actual phase/report code with link-fenced mock Security calls, plus Swift JSON to real Python validator contract |
