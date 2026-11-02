@@ -10,6 +10,10 @@ on:
           - macos-15
           - macos-26-intel
         default: macos-26
+      cross_compile_arm64:
+        description: Intel host tests plus ARM BUILD_ONLY artifact; ARM execution stays pending
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -29,9 +33,20 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
           xcodebuild -version
           test "$(xcrun --sdk macosx --show-sdk-version)" = 26.2
+      - name: Select Intel cross-build toolchain
+        if: inputs.cross_compile_arm64
+        env:
+          PARROT_REQUESTED_RUNNER: ${{ inputs.runner }}
+        run: |
+          test "$PARROT_REQUESTED_RUNNER" = macos-26-intel
+          test "$(uname -m)" = x86_64
+          test -d /Applications/Xcode_26.6.app/Contents/Developer
+          sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
+          xcodebuild -version
+          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
       - uses: actions/cache@v4
         # Do not share Mac26 compiled objects with the different host/toolchain.
-        if: inputs.runner != 'macos-15'
+        if: inputs.runner != 'macos-15' && !inputs.cross_compile_arm64
         with:
           path: .build
           key: local-compat-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
@@ -57,12 +72,22 @@ jobs:
           SWIFT
           swift /tmp/parrot-embedding-assets.swift
       - name: Build and verify candidate
-        run: bash scripts/build-local-candidate.sh
+        env:
+          PARROT_CROSS_COMPILE_ARM64: ${{ inputs.cross_compile_arm64 }}
+        run: |
+          if [[ "$PARROT_CROSS_COMPILE_ARM64" == true ]]; then
+            python3 -B scripts/test-arm-cross-candidate.py
+          fi
+          bash scripts/build-local-candidate.sh
+          if [[ "$PARROT_CROSS_COMPILE_ARM64" == true ]]; then
+            bash scripts/build-arm-cross-candidate.sh
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: local-macos-candidate
+          name: ${{ inputs.cross_compile_arm64 && 'arm-cross-build-only-candidate' || 'local-macos-candidate' }}
           path: |
             Parrot-local-candidate.zip
+            Parrot-arm64-build-only.zip
             build-evidence/
           retention-days: 7

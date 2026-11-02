@@ -200,6 +200,9 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/catalog-sign.swift` | Local Ed25519 artifact signer; private key stays outside source/CI/vault; requires an approved payload hash before signing |
 | `scripts/build-local-candidate.sh` | Private-test Mac CI build: full harness, stable isolated QA identity/service, persistent QA keys, updates off, architecture/signature/archive/startup receipts; ad-hoc update continuity requires native proof |
 | `.github/workflows/local-compatibility.yml` | Allowlisted Mac26/ARM Mac15 candidate build; Mac15 selects Xcode26.3/SDK26.2 with no shared build cache and keeps every test; Intel and CI never substitute for actual ARM Mac26 app acceptance |
+| `scripts/build-arm-cross-candidate.sh` | CI-only sequential wrapper after unchanged Intel full builder: separate ARM scratch/bin path, Makefile resources, verified QA policy, runtime signing and BUILD_ONLY archive; never executes ARM on Intel |
+| `scripts/prepare-arm-cross-candidate.py` | Host/target source and QA policy validation; actual ARM Mach-O/minOS/slices, embedded entitlements/runtime/signature and archive byte receipts; all ARM/native outcomes remain pending |
+| `scripts/test-arm-cross-candidate.py` | Synthetic policy/workspace/signature/archive rejection and wrapper CI-only checks; native tool boundaries are inert, not actual build/app proof |
 | `scripts/run-native-credential-probe.py` | Artifact-qualified three-process synthetic Keychain component proof; private durable pending nonce/checkpoints, bounded child output, explicit same-artifact recovery |
 | `scripts/test-native-credential-runner.py` | Runner ordering/identity/recovery/privacy/cleanup checks and fictional child timeout/reaping; no real credentials |
 | `scripts/test-native-credential-probe.py` | Actual phase/report code with link-fenced mock Security calls, plus Swift JSON to real Python validator contract |
