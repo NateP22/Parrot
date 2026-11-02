@@ -238,7 +238,13 @@ final class ParrotAppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard ParrotApp.mainWindow == nil else { return true }
         Self.showInDock()
-        openMainWindow?(id: ParrotApp.mainWindowID)
+        // SwiftUI may not have registered an opener yet. Do not swallow a
+        // reopen event without opening anything; let AppKit handle it.
+        guard let openMainWindow else {
+            NSApp.activate()
+            return true
+        }
+        openMainWindow(id: ParrotApp.mainWindowID)
         NSApp.activate()
         return false
     }
@@ -302,6 +308,9 @@ struct ParrotApp: App {
                         applyAppearance()
                         appDelegate.recordingManager = recordingManager
                         appDelegate.appSession = appSession
+                    }
+                    .background {
+                        WindowOpener { appDelegate.openMainWindow = $0 }
                     }
             } else {
             ContentView()

@@ -203,6 +203,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/test-native-credential-runner.py` | Runner ordering/identity/recovery/privacy/cleanup checks and fictional child timeout/reaping; no real credentials |
 | `scripts/test-native-credential-probe.py` | Actual phase/report code with link-fenced mock Security calls, plus Swift JSON to real Python validator contract |
 | `scripts/test-qa-credential-admission.py` | Compiled actual launch/parser admission and existing strict QA setup regressions; no Keychain or models |
+| `scripts/test-qa-window-reopen.py` | Compiled actual delegate reopen decisions with inert UI boundaries; nil-opener fallback, activation and duplicate-window regressions; not native window proof |
 | `scripts/native_answer_qualification.py` | Offline per-trial acoustic-to-visible calculation on independently reviewed evidence; exact integer uncertainty/deadline/identity/first-answer gates; never authenticates evidence or grants native acceptance |
 | `scripts/test-native-answer-qualification.py` | Synthetic timing, wrong-first, visibility, plainness and bounded-file parser regressions; no app/audio/provider access |
 | `integrations/claude-plugin/` | Claude plugin for the connector directory: `.mcp.json` + `server/launch.sh` (same launcher as the release `.mcpb`, harness-checked), seven skills mirroring the MCP prompts, README, PRIVACY |

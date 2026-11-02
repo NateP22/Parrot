@@ -6,6 +6,7 @@ swift --version | tee build-evidence/toolchain.txt
 xcodebuild -version | tee -a build-evidence/toolchain.txt
 python3 scripts/test-keychain-store.py | tee build-evidence/credentials.log
 python3 scripts/test-qa-credential-admission.py 2>&1 | tee build-evidence/credential-admission.log
+python3 scripts/test-qa-window-reopen.py 2>&1 | tee build-evidence/qa-window-reopen.log
 python3 scripts/test-native-credential-probe.py 2>&1 | tee build-evidence/credential-probe-components.log
 python3 scripts/test-native-credential-runner.py 2>&1 | tee build-evidence/credential-runner-components.log
 python3 scripts/test-qa-bundle-policy.py 2>&1 | tee build-evidence/qa-bundle-policy.log
