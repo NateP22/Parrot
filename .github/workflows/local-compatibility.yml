@@ -3,10 +3,11 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: Mac26 runner; Intel is a logic/build fallback, not ARM native acceptance
+        description: ARM Mac26 or Mac15 build fallback; Intel is never ARM native acceptance
         type: choice
         options:
           - macos-26
+          - macos-15
           - macos-26-intel
         default: macos-26
 permissions:
@@ -14,11 +15,23 @@ permissions:
 jobs:
   candidate:
     # Never accept an arbitrary self-hosted runner label from a dispatch input.
-    runs-on: ${{ inputs.runner == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
+    runs-on: ${{ inputs.runner == 'macos-15' && 'macos-15' || inputs.runner == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+      # The ARM macOS15 image defaults to an older SDK. Select the documented
+      # Xcode26 toolchain explicitly; never silently fall back or skip tests.
+      - name: Select ARM fallback toolchain
+        if: inputs.runner == 'macos-15'
+        run: |
+          test "$(uname -m)" = arm64
+          test -d /Applications/Xcode_26.3.app/Contents/Developer
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          xcodebuild -version
+          test "$(xcrun --sdk macosx --show-sdk-version)" = 26.2
       - uses: actions/cache@v4
+        # Do not share Mac26 compiled objects with the different host/toolchain.
+        if: inputs.runner != 'macos-15'
         with:
           path: .build
           key: local-compat-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
