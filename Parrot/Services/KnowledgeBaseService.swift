@@ -265,6 +265,9 @@ final class KnowledgeBaseService {
         if reviewedCatalogError != nil { return "Reviewed answers unavailable — re-import the library." }
         guard let reviewedCatalog else { return nil }
         let active = reviewedCatalog.admitted(documents: documents, folders: folders, profileID: nil)
+        if active.mode == .reviewedFacts {
+            return "\(active.facts.count) of \(reviewedCatalog.facts?.count ?? 0) reviewed facts match imported sources."
+        }
         return "\(active.answers.count) of \(reviewedCatalog.answers.count) reviewed replies match imported sources."
     }
 

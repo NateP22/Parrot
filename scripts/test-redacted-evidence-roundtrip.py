@@ -45,6 +45,10 @@ subject = redactor[:redactor.index("// MARK: - Requests and results")]
 # extra optional index field defaults to nil in the old restoration method.
 # This is an old-function regression control, never an old full-app execution.
 transport = (root / "Parrot/Services/AnalysisProvider.swift").read_text()
+facts = (root / "Parrot/Services/ReviewedFacts.swift").read_text()
+scope = (root / "Parrot/Services/ReviewedQuestionScope.swift").read_text()
+subject += "\n" + next(line for line in scope.splitlines() if line.startswith("enum ReviewedSourceAuthority:"))
+subject += "\nenum ReviewedAnswerCatalog {\n" + method(facts, "    struct FactCitation:") + "\n}\n"
 subject += "\n" + "\n".join(structure(transport, name) for name in ("InsightDraft", "AnalysisResult"))
 subject += "\n" + structure(kb, "KBReference")
 subject += "\nextension Redactor {\n"
@@ -65,7 +69,8 @@ wiring = all(term in switching for term in (
     "let redacted = redactor.redact(outgoing)",
     "liveProvider.analyze(redacted)",
     "originalReferences: outgoing.references, redactedReferences: redacted.references",
-    "requireStrictEvidence: request.currentQuestion != nil && !request.allowGeneralKnowledge",
+    "requireStrictEvidence: request.currentQuestion != nil",
+    "(!request.allowGeneralKnowledge || request.usesReviewedFacts)",
 ))
 main = r'''
 import Foundation

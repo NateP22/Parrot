@@ -64,6 +64,7 @@ jobs:
           mkdir source-grounded-evidence
           git fetch --no-tags --depth=1 origin ed9934a7938a3fb2c60975e298a4c6a2359437d7
           python3 -B scripts/test-document-review-context.py | tee source-grounded-evidence/document-review-context.log
+          python3 -B scripts/test-reviewed-facts.py | tee source-grounded-evidence/reviewed-facts.log
           python3 -B scripts/test-redacted-evidence-roundtrip.py --source-ref ed9934a7938a3fb2c60975e298a4c6a2359437d7 --expect-red | tee source-grounded-evidence/redacted-evidence-before.log
           python3 -B scripts/test-redacted-evidence-roundtrip.py | tee source-grounded-evidence/redacted-evidence-after.log
       - uses: actions/cache@v4

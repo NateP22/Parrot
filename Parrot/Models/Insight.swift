@@ -19,6 +19,8 @@ struct Insight: Identifiable, Equatable {
     /// For unresolved flags: one short line the user could say to address it
     /// (KB-grounded when the documents cover it, else general knowledge).
     var reply: String? = nil
+    /// App-resolved fact provenance; never supplied by model JSON.
+    var evidenceFactCitations: [ReviewedAnswerCatalog.FactCitation]? = nil
     let createdAt = Date()
     var isHandled = false
 
@@ -42,6 +44,8 @@ final class CallInsight {
     var source: String?
     /// Suggested line to address an unresolved flag (defaulted → old rows migrate).
     var reply: String? = nil
+    /// Optional for legacy rows. Exact source identities survive save/reopen.
+    var evidenceFactCitationsData: Data? = nil
     var isHandled: Bool
 
     init(from insight: Insight) {
@@ -52,7 +56,13 @@ final class CallInsight {
         self.callTime = insight.callTime
         self.source = insight.source
         self.reply = insight.reply
+        self.evidenceFactCitationsData = insight.evidenceFactCitations.map { (try? JSONEncoder().encode($0)) ?? Data() }
         self.isHandled = insight.isHandled
+    }
+
+    var evidenceFactCitations: [ReviewedAnswerCatalog.FactCitation]? {
+        guard let data = evidenceFactCitationsData else { return nil }
+        return try? JSONDecoder().decode([ReviewedAnswerCatalog.FactCitation].self, from: data)
     }
 
     var style: KindStyle { KindResolver.fallbackStyle(forKey: kindRaw) }

@@ -30,6 +30,8 @@ struct AnalysisRequest {
     let references: [KBReference]
     let instructions: String
     let callBrief: String
+    var reviewedModelEvidence: [[String: Any]]? = nil
+    var usesReviewedFacts = false
 }
 final class Subject {
     static let model = "fictional-no-network"
@@ -51,7 +53,9 @@ final class Subject {
     }
 '''
 subject += "\n" + "\n".join([
+    method("    static func evidenceItems("),
     method("    static func strictAnswerContent("),
+    source[source.index('    static let reviewedFactRule = """'):source.index('\n        """', source.index('    static let reviewedFactRule = """')) + len('\n        """')],
     source[prompt_start:prompt_end],
     method("    static func evidenceReviewBody("),
     method("    private func reviewAnswer("),

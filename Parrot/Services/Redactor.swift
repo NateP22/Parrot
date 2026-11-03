@@ -133,6 +133,9 @@ extension Redactor {
     /// redacted. The user's own profile instructions and persona stay as
     /// written.
     mutating func redact(_ r: AnalysisRequest) -> AnalysisRequest {
+        if r.usesReviewedFacts && r.reviewedFactContext == nil {
+            return redact(r.preparingReviewedFacts())
+        }
         var copy = AnalysisRequest(
             transcript: redact(r.transcript),
             currentQuestion: r.currentQuestion.map { redact($0) },
@@ -154,7 +157,8 @@ extension Redactor {
         copy.reviewedCatalog = r.reviewedCatalog
         copy.answerTrace = r.answerTrace
         copy.reviewedQuestionKey = r.reviewedQuestionKey ?? r.currentQuestion
-        if let catalog = r.reviewedCatalog {
+        copy.reviewedFactContext = r.reviewedFactContext?.redacting { redact($0) }
+        if let catalog = r.reviewedCatalog, catalog.mode == .wholeReply {
             let candidates = catalog.candidates(question: r.reviewedQuestionKey ?? r.currentQuestion ?? "",
                 referenceNames: Set(r.references.map(\.documentName)))
             copy.reviewedSelectionEntries = catalog.selectionEntries(for: candidates).map { entry in
@@ -202,7 +206,8 @@ extension Redactor {
                              evidenceQuote: d.evidenceQuote.map { restore($0) },
                              answerKey: d.answerKey.map { restore($0) },
                              evidenceSources: d.evidenceSources, evidenceReferences: d.evidenceReferences,
-                             evidenceReferenceIndices: d.evidenceReferenceIndices)
+                             evidenceReferenceIndices: d.evidenceReferenceIndices,
+                             evidenceFactCitations: d.evidenceFactCitations)
                 func rejected() -> InsightDraft {
                     ClaudeAnalysisProvider.applyingEvidenceReview(restored, approved: false)
                 }
@@ -227,7 +232,8 @@ extension Redactor {
                         supersedes: restored.supersedes,
                         evidenceQuote: evidence.references.map(\.text).joined(separator: "\n\n"),
                         answerKey: restored.answerKey, evidenceSources: d.evidenceSources,
-                        evidenceReferences: evidence.references, evidenceReferenceIndices: evidence.indices)
+                        evidenceReferences: evidence.references, evidenceReferenceIndices: evidence.indices,
+                        evidenceFactCitations: d.evidenceFactCitations)
                 }
                 return restored
             },

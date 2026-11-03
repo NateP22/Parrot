@@ -1,18 +1,22 @@
 import Foundation
 import CryptoKit
 
-/// Whole, source-reviewed replies. The live model may select an ID, never
-/// author or combine their factual wording. Source review is not app acceptance.
+/// Signed knowledge: legacy whole replies or separately reviewed fact spans.
+/// Source review is not model, native, or client acceptance.
 struct ReviewedAnswerCatalog: Codable {
     static let fileFormat = "parrot-reviewed-answers-v2"
+    static let factFileFormat = "parrot-reviewed-facts-v1"
     /// Public verification material only. The local signing key is never
     /// bundled with the app, source repository, CI or knowledge library.
     static let verificationKeyBase64 = "4EJ5i69h3df2DchnTdF/eK7ub9B1yP7sj2GOqxFzqVo="
     let format: String
     let sources: [Source]
     let answers: [Answer]
+    let mode: KnowledgeMode?
+    let facts: [Fact]?
     private var validated = false
-    private enum CodingKeys: String, CodingKey { case format, sources, answers }
+    private enum CodingKeys: String, CodingKey { case format, sources, answers, mode, facts }
+    var effectiveMode: KnowledgeMode { mode ?? .wholeReply }
 
     struct Source: Codable {
         let id: String
@@ -95,11 +99,17 @@ struct ReviewedAnswerCatalog: Codable {
         let sources: [Source]
         let answers: [Answer]
         let admissionIssues: [String]
+        let mode: KnowledgeMode
+        let facts: [Fact]
         /// Retain signed routing definitions even when their source is out of play.
         /// A missing second topic must not turn a compound question into a partial answer.
         private let scopeDefinitions: [ReviewedQuestionScope]
 
         var revisionToken: String {
+            if mode == .reviewedFacts {
+                return ReviewedAnswerCatalog.digest(["fact-snapshot-v1", String(sources.count)]
+                    + sources.map(\.id).sorted() + [String(facts.count)] + facts.map(\.id).sorted())
+            }
             // Explicit steps keep Xcode 16's type checker within its budget.
             // The ordered, length-prefixed digest input is unchanged.
             var parts: [String] = ["snapshot-v2", String(sources.count)]
@@ -113,11 +123,14 @@ struct ReviewedAnswerCatalog: Codable {
         }
 
         fileprivate init(sources: [Source], answers: [Answer], admissionIssues: [String],
-                         scopeDefinitions: [ReviewedQuestionScope] = []) {
+                         scopeDefinitions: [ReviewedQuestionScope] = [],
+                         mode: KnowledgeMode = .wholeReply, facts: [Fact] = []) {
             self.sources = sources
             self.answers = answers
             self.admissionIssues = admissionIssues
             self.scopeDefinitions = scopeDefinitions
+            self.mode = mode
+            self.facts = facts
         }
 
         static func unavailable(_ reason: String) -> Snapshot {
@@ -230,7 +243,7 @@ struct ReviewedAnswerCatalog: Codable {
         guard data.count <= 16 * 1024 * 1024 else { throw ValidationError.invalid("file is too large") }
         struct Envelope: Decodable { let format: String; let payload: String; let signature: String }
         guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data),
-              envelope.format == "parrot-reviewed-answers-signed-v2",
+              ["parrot-reviewed-answers-signed-v2", "parrot-reviewed-facts-signed-v1"].contains(envelope.format),
               let payload = Data(base64Encoded: envelope.payload), payload.count <= 12 * 1024 * 1024,
               let signature = Data(base64Encoded: envelope.signature),
               let publicBytes = Data(base64Encoded: verificationKeyBase64),
@@ -239,6 +252,9 @@ struct ReviewedAnswerCatalog: Codable {
             throw ValidationError.invalid("missing or invalid trusted catalog signature")
         }
         var result = try JSONDecoder().decode(Self.self, from: payload)
+        guard (envelope.format == "parrot-reviewed-answers-signed-v2" && result.format == Self.fileFormat)
+            || (envelope.format == "parrot-reviewed-facts-signed-v1" && result.format == Self.factFileFormat)
+            else { throw ValidationError.invalid("signed envelope and payload formats differ") }
         try result.validate()
         return result
     }
@@ -248,8 +264,16 @@ struct ReviewedAnswerCatalog: Codable {
         func require(_ condition: Bool, _ reason: String) throws {
             if !condition { throw ValidationError.invalid(reason) }
         }
-        try require(format == Self.fileFormat, "unknown file format")
-        try require(!sources.isEmpty && !answers.isEmpty, "empty library")
+        switch effectiveMode {
+        case .wholeReply:
+            try require(format == Self.fileFormat && (facts?.isEmpty ?? true), "invalid whole-reply format")
+            try require(!answers.isEmpty, "empty reply library")
+        case .reviewedFacts:
+            try require(format == Self.factFileFormat && mode == .reviewedFacts && answers.isEmpty,
+                        "invalid reviewed-fact format")
+            try require(!(facts?.isEmpty ?? true), "empty fact library")
+        }
+        try require(!sources.isEmpty, "empty source library")
         try require(Set(sources.map(\.id)).count == sources.count, "duplicate source ID")
         try require(Set(sources.map(\.name)).count == sources.count, "ambiguous document names")
         try require(Set(answers.map(\.id)).count == answers.count, "duplicate answer ID")
@@ -262,6 +286,11 @@ struct ReviewedAnswerCatalog: Codable {
             try require(source.id == "s-" + source.identityDigest, "source identity changed")
         }
         let byID = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
+        if effectiveMode == .reviewedFacts {
+            try validateFacts()
+            validated = true
+            return
+        }
         var scopes: [String: ReviewedQuestionScope] = [:]
         for answer in answers {
             try require(answer.scope.isValid, "invalid reviewed question scope")
@@ -327,6 +356,10 @@ struct ReviewedAnswerCatalog: Codable {
             acceptedSources.append(source)
         }
         let sourceIDs = Set(acceptedSources.map(\.id))
+        if effectiveMode == .reviewedFacts {
+            return Snapshot(sources: acceptedSources, answers: [], admissionIssues: issues,
+                mode: .reviewedFacts, facts: (facts ?? []).filter { sourceIDs.contains($0.evidence.sourceID) })
+        }
         let eligible = answers.filter { $0.evidence.allSatisfy { sourceIDs.contains($0.sourceID) } }
         let definitions = Dictionary(grouping: answers.map(\.scope), by: \.key)
             .values.compactMap(\.first).sorted { $0.key < $1.key }

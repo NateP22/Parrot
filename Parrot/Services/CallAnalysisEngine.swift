@@ -509,7 +509,7 @@ final class CallAnalysisEngine {
             forceLocal: forceLocal,
             reviewedCatalog: reviewedCatalog,
             answerTrace: answerTrace
-        )
+        ).preparingReviewedFacts()
         answerTrace?.mark(.retrievalDone)
 
         if currentQuestion != nil && !request.allowGeneralKnowledge {
@@ -635,7 +635,8 @@ final class CallAnalysisEngine {
                 if let identity = Self.documentAnswerIdentity(draft),
                    !seenDocumentAnswers.insert(identity).inserted { return nil }
                 let insight = Insight(kindKey: draft.kindKey, title: draft.title, detail: draft.detail,
-                                      callTime: anchorTime, source: draft.source, reply: draft.reply)
+                                      callTime: anchorTime, source: draft.source, reply: draft.reply,
+                                      evidenceFactCitations: draft.evidenceFactCitations)
                 if draft.answerKey != nil { documentAnswerInsightIDs.insert(insight.id) }
                 return insight
             }

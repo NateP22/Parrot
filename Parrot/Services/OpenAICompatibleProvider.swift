@@ -180,7 +180,7 @@ final class OpenAICompatibleProvider: AnalysisProvider {
     // MARK: - AnalysisProvider
 
     func analyze(_ request: AnalysisRequest) async throws -> AnalysisResult {
-        if !request.allowGeneralKnowledge,
+        if (!request.allowGeneralKnowledge || request.usesReviewedFacts),
            let catalog = request.reviewedCatalog {
             // This backend has no reviewed-ID selector. A configured library
             // must never silently fall back to free-form product claims.
@@ -566,7 +566,8 @@ final class SwitchingAnalysisProvider: AnalysisProvider {
     // as placeholders, real values back in the answer. Ollama gets the text
     // as is — it never leaves the Mac.
 
-    func analyze(_ request: AnalysisRequest) async throws -> AnalysisResult {
+    func analyze(_ incoming: AnalysisRequest) async throws -> AnalysisResult {
+        let request = incoming.preparingReviewedFacts()
         if request.forceLocal || CloudGate.forcesLocal {
             return try await localCompat.analyze(request)
         }
@@ -581,10 +582,11 @@ final class SwitchingAnalysisProvider: AnalysisProvider {
         // Reviewed wording/evidence were selected locally from the original
         // catalog. Replacing placeholders in them would alter approved text.
         let reviewedReply = request.currentQuestion != nil && !request.allowGeneralKnowledge
-            && request.reviewedCatalog != nil
+            && request.reviewedCatalog?.mode == .wholeReply
         return reviewedReply ? result : redactor.restore(result,
             originalReferences: outgoing.references, redactedReferences: redacted.references,
-            requireStrictEvidence: request.currentQuestion != nil && !request.allowGeneralKnowledge)
+            requireStrictEvidence: request.currentQuestion != nil
+                && (!request.allowGeneralKnowledge || request.usesReviewedFacts))
     }
 
     func summarize(transcript: String, insightTitles: [String], bookmarks: [String],

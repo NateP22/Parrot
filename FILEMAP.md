@@ -11,6 +11,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ParrotApp.swift` | 290 | `@main`; parses CLI harness flags before the SwiftUI `App` starts |
 | `Parrot/ProfileTest.swift` | 6565 | --profile-test: grounding, imported-text fingerprints, signed-catalog boundary checks, source/report and urgent-question guards |
 | `Parrot/ProfileTest+ReviewedAnswers.swift` | 97 | Signed synthetic fixtures for catalog authenticity, exact text/hash/version, scope, malformed data and short-reply boundaries |
+| `Parrot/ProfileTest+ReviewedFacts.swift` | candidate | Fresh disk-store provenance round trip and report quote suppression; old-schema/native migration remains separate |
 | `Parrot/ProfileTest+ReviewedScope.swift` | 100 | Signed synthetic v2 authority/scope/form, forced wrong-ID, ambiguity, metadata-tamper and v1 persistence boundaries |
 | `Parrot/ProfileTest+ReviewedFormContext.swift` | 132 | Fictional general/state, clause-local conditions, owned-input and quoted-content regressions |
 | `Parrot/ProfileTest+ReviewedScopeAliases.swift` | 90 | Signed synthetic alias bounds, actual catalog admission, compound partial-answer rejection and off-source topic preservation |
@@ -88,6 +89,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/CallAnalysisEngine.swift` | 978 | Live Copilot; retrieval, cancellation/dedup, current reviewed-library scope revalidation before inserting a card |
 | `Services/JevDocMatcher.swift` | 175 | TypeSafe "Jev" client: one probability per KB chunk that it answers the question; same-issue verdicts for card dedup |
 | `Services/ReviewedAnswerCatalog.swift` | 301 | Authenticated complete reply library; pinned signature, source/unit identity, exact UTF-8 evidence, version and live document-scope checks |
+| `Parrot/Services/ReviewedFacts.swift` | candidate | Individually reviewed signed facts; exact source spans, conditions, bounded projection and app-owned citation identities; source/model/native proof separate |
 | `Services/ReviewedQuestionScope.swift` | 270 | Typed source authority and AND/OR routing; clause-local leading/trailing control conditions with shared quote/state guards |
 | `Services/ReviewedAnswerStore.swift` | 66 | Durable reviewed-mode intent, signed-library validation, backup and atomic install/readback; missing or invalid libraries remain required on reopen |
 | `Services/KnowledgeBaseService.swift` | 774 | Local KB imports, text fingerprints, signed answer-library import/backup/readback, source-scope admission, hybrid retrieval |
@@ -212,6 +214,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/test-selector-credential-policy.py` | Actual selector key-read block and background forwarding with link-fenced Security shims; refuses UI suppression failures, locked/missing own keys, preserves ordinary defaults; no real credentials |
 | `scripts/test-reviewed-form-context.py` | Bounded actual-source run of existing fictional condition/state/quote routing regressions; no app, credentials, models, provider score or native acceptance |
 | `scripts/test-document-review-context.py` | Actual strict request/review functions with inert transport; follow-up context parity, data bounds, cancellation and failure controls; no model/native acceptance |
+| `scripts/test-reviewed-facts.py` | Actual fact admission/request/parser/privacy/store source with temporary synthetic trust root and inert verdicts; no production signatures or model/native acceptance |
 | `scripts/test-redacted-evidence-roundtrip.py` | Actual Redactor/selected evidence round-trip and fail-closed collisions; fictional data, optional compiled historical RED baseline; no keys/models/native acceptance |
 | `scripts/test-qa-credential-admission.py` | Compiled actual launch/parser admission and existing strict QA setup regressions; no Keychain or models |
 | `scripts/test-qa-window-reopen.py` | Compiled actual delegate reopen decisions with inert UI boundaries; nil-opener fallback, activation and duplicate-window regressions; not native window proof |

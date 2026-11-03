@@ -89,6 +89,7 @@ enum ProfileTest {
         testReceiptStamps()
         testReceiptIndex()
         testReportReceipts()
+        testReviewedFactPersistence()
         testReceiptPrompts()
         testBookmarks()
         testTranscriptMerge()
