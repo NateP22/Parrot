@@ -1695,8 +1695,13 @@ enum APIKeyStore {
             }
             let loaded = load(account: account, allowInteraction: requestAuthorization)
             // A concurrent explicit Save is newer than an in-flight read.
-            let latest = cache.withLock { $0[account] ?? nil }
-            if let key = latest ?? loaded, !key.isEmpty { return .available(key) }
+            let current = cache.withLock { values -> String? in
+                // A present nil is a newer delete/failure tombstone, not an
+                // absent entry. Never revive the older in-flight read.
+                if let cached = values[account] { return cached }
+                return loaded
+            }
+            if let key = current, !key.isEmpty { return .available(key) }
             if isSessionOnly { return .notFound }
             switch metadataStatus(account: account, allowInteraction: false) {
             case errSecItemNotFound: return .notFound

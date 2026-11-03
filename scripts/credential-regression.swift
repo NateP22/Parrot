@@ -16,6 +16,7 @@ var updates: [String: Int] = [:]
 var services: [String] = []
 var dataRequests: [String: [Bool]] = [:]
 var interactionRequests: [Bool?] = []
+var afterRead: [String: () -> Void] = [:]
 
 func account(_ query: CFDictionary) -> String {
     let context = (query as NSDictionary)[kSecUseAuthenticationContext] as? LAContext
@@ -30,6 +31,7 @@ func SecItemCopyMatching(_ query: CFDictionary, _ output: UnsafeMutablePointer<C
     if let status = blockedReads[name] { return status }
     guard let value = records[name] else { return errSecItemNotFound }
     output?.pointee = value as NSData
+    if let completion = afterRead.removeValue(forKey: name) { completion() }
     return errSecSuccess
 }
 func SecItemDelete(_ query: CFDictionary) -> OSStatus {
@@ -91,6 +93,11 @@ if CommandLine.arguments.contains("--settings-lookup-tests") {
         check("explicit retry recovers the same saved key without save", retried == .available("public-existing-fixture"))
         check("explicit retry retains ordinary authorization policy", interactionRequests.last! == nil)
         check("saved-key lookup never adds, updates or deletes credentials", additions.isEmpty && updates.isEmpty && deletions.isEmpty)
+        records["settings-deleted"] = Data("public-deleted-fixture".utf8)
+        afterRead["settings-deleted"] = { _ = APIKeyStore.delete(account: "settings-deleted", allowInteraction: false) }
+        let deleted = await APIKeyStore.settingsKey(account: "settings-deleted")
+        check("concurrent delete cannot revive an in-flight saved key", deleted == .notFound)
+        check("only the test's explicit deletion touched its fixture", deletions["settings-deleted"] == 1 && records["settings-deleted"] == nil)
         let absent = await APIKeyStore.settingsKey(account: "settings-absent")
         check("no existing record is labelled correctly", absent == .notFound)
         blockedReads["settings-unavailable"] = errSecNotAvailable
