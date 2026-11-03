@@ -80,6 +80,7 @@ jobs:
           fi
           python3 -B scripts/test-redacted-evidence-roundtrip.py --source-ref ed9934a7938a3fb2c60975e298a4c6a2359437d7 --expect-red | tee source-grounded-evidence/redacted-evidence-before.log
           python3 -B scripts/test-redacted-evidence-roundtrip.py | tee source-grounded-evidence/redacted-evidence-after.log
+          python3 -B scripts/probe-mcp-bundle.py | tee source-grounded-evidence/mcp-bundle-probe.log
       - uses: actions/cache@v4
         # Do not share Mac26 compiled objects with the different host/toolchain.
         if: inputs.runner != 'macos-15' && !inputs.cross_compile_arm64 && !inputs.arm_setup_only && !inputs.source_checks_only
