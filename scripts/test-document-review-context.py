@@ -5,6 +5,7 @@ Fictional context only. This does not test model judgment, credentials, audio,
 native answers, or the reviewed whole-reply selector's usefulness score.
 """
 from pathlib import Path
+import platform
 import subprocess
 import tempfile
 
@@ -22,7 +23,8 @@ prompt_start = source.index("    static let evidenceReviewPrompt = \"\"\"")
 prompt_end = source.index('\n        """', prompt_start) + len('\n        """')
 subject = r'''
 import Foundation
-struct KBReference { let documentName: String; let text: String }
+struct RepositoryCitation { let commit: String; let path: String; let startLine: Int; let endLine: Int }
+struct KBReference { let documentName: String; let text: String; var repositoryCitation: RepositoryCitation? = nil }
 struct InsightDraft { let reply: String?; let source: String? }
 struct AnalysisRequest {
     let transcript: String
@@ -32,6 +34,7 @@ struct AnalysisRequest {
     let callBrief: String
     var reviewedModelEvidence: [[String: Any]]? = nil
     var usesReviewedFacts = false
+    var usesRepository = false
 }
 final class Subject {
     static let model = "fictional-no-network"
@@ -56,6 +59,7 @@ subject += "\n" + "\n".join([
     method("    static func evidenceItems("),
     method("    static func strictAnswerContent("),
     source[source.index('    static let reviewedFactRule = """'):source.index('\n        """', source.index('    static let reviewedFactRule = """')) + len('\n        """')],
+    source[source.index('    static let repositorySourceRule = """'):source.index('\n        """', source.index('    static let repositorySourceRule = """')) + len('\n        """')],
     source[prompt_start:prompt_end],
     method("    static func evidenceReviewBody("),
     method("    private func reviewAnswer("),
@@ -133,7 +137,9 @@ with tempfile.TemporaryDirectory(prefix="parrot-document-review-context-") as di
     (temp / "main.swift").write_text(main)
     binary = temp / "checks"
     subprocess.run([
-        "swiftc", "-swift-version", "5", "-module-cache-path", str(temp / "module-cache"),
+        "swiftc", "-swift-version", "5", "-target", platform.machine() + "-apple-macosx14.0",
+        "-sdk", subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip(),
+        "-module-cache-path", str(temp / "module-cache"),
         str(temp / "Subject.swift"), str(temp / "main.swift"), "-o", str(binary),
     ], check=True, timeout=120)
     raise SystemExit(subprocess.run([str(binary)], timeout=15).returncode)

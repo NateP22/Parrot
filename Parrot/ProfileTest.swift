@@ -52,6 +52,7 @@ enum ProfileTest {
         ReviewedFormContextTests.run { check($0, $1) }
         ReviewedScopeAliasTests.run { check($0, $1) }
         ReviewedTransportTests.runSync { check($0, $1) }
+        RepositoryKnowledgeTests.runSync { check($0, $1) }
         testStableHash()
         testNearDuplicate()
         testSupersedes()

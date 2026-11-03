@@ -21,6 +21,7 @@ struct Insight: Identifiable, Equatable {
     var reply: String? = nil
     /// App-resolved fact provenance; never supplied by model JSON.
     var evidenceFactCitations: [ReviewedAnswerCatalog.FactCitation]? = nil
+    var repositoryCitations: [RepositoryCitation]? = nil
     let createdAt = Date()
     var isHandled = false
 
@@ -46,6 +47,7 @@ final class CallInsight {
     var reply: String? = nil
     /// Optional for legacy rows. Exact source identities survive save/reopen.
     var evidenceFactCitationsData: Data? = nil
+    var repositoryCitationsData: Data? = nil
     var isHandled: Bool
 
     init(from insight: Insight) {
@@ -57,12 +59,18 @@ final class CallInsight {
         self.source = insight.source
         self.reply = insight.reply
         self.evidenceFactCitationsData = insight.evidenceFactCitations.map { (try? JSONEncoder().encode($0)) ?? Data() }
+        self.repositoryCitationsData = insight.repositoryCitations.flatMap { try? JSONEncoder().encode($0) }
         self.isHandled = insight.isHandled
     }
 
     var evidenceFactCitations: [ReviewedAnswerCatalog.FactCitation]? {
         guard let data = evidenceFactCitationsData else { return nil }
         return try? JSONDecoder().decode([ReviewedAnswerCatalog.FactCitation].self, from: data)
+    }
+
+    var repositoryCitations: [RepositoryCitation]? {
+        guard let data = repositoryCitationsData else { return nil }
+        return try? JSONDecoder().decode([RepositoryCitation].self, from: data)
     }
 
     var style: KindStyle { KindResolver.fallbackStyle(forKey: kindRaw) }

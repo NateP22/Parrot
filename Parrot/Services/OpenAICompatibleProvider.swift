@@ -180,6 +180,15 @@ final class OpenAICompatibleProvider: AnalysisProvider {
     // MARK: - AnalysisProvider
 
     func analyze(_ request: AnalysisRequest) async throws -> AnalysisResult {
+        if request.usesRepository {
+            // This backend has no qualified code-evidence reviewer. Preserve
+            // local/private routing and fail closed before any model call.
+            guard request.currentQuestion?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false else {
+                return AnalysisResult(insights: [], sentiment: [:], read: nil, coach: nil, resolved: [])
+            }
+            let draft = ClaudeAnalysisProvider.repositoryUnavailableDraft(request)
+            return AnalysisResult(insights: [draft], sentiment: [:], read: nil, coach: nil, resolved: [])
+        }
         if (!request.allowGeneralKnowledge || request.usesReviewedFacts),
            let catalog = request.reviewedCatalog {
             // This backend has no reviewed-ID selector. A configured library

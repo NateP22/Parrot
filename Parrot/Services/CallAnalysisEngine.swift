@@ -379,7 +379,8 @@ final class CallAnalysisEngine {
 
     private func requestIsCurrent(_ request: AnalysisRequest, profileID: UUID?) -> Bool {
         guard activeProfile?.id == profileID,
-              (activeProfile?.allowGeneralKnowledge ?? true) == request.allowGeneralKnowledge else { return false }
+              knowledgeBase?.repositoryRevision == request.repositoryRevision,
+              (request.usesRepository ? false : (activeProfile?.allowGeneralKnowledge ?? true)) == request.allowGeneralKnowledge else { return false }
         return request.allowGeneralKnowledge ||
             knowledgeBase?.reviewedAnswerSnapshot(for: profileID)?.revisionToken == request.reviewedCatalog?.revisionToken
     }
@@ -410,7 +411,8 @@ final class CallAnalysisEngine {
         // CallProfile is a mutable reference. Freeze policy values before the
         // first await so a Settings edit cannot change only half a request.
         let requestedProfileID = profile?.id
-        let requestedGeneralKnowledge = profile?.allowGeneralKnowledge ?? true
+        let requestedRepositoryRevision = knowledgeBase?.repositoryRevision
+        let requestedGeneralKnowledge = requestedRepositoryRevision == nil ? (profile?.allowGeneralKnowledge ?? true) : false
         // An empty kind list can't produce a valid schema ("enum": [] is a 400
         // on every call) — surface it once instead of erroring forever.
         guard !(profile?.kinds ?? []).isEmpty else {
@@ -468,7 +470,8 @@ final class CallAnalysisEngine {
                 guard isActive, !Task.isCancelled else { return }
             }
             let windowQuery = recent.map(\.text).joined(separator: " ")
-            let windowReferences = await kb.search(query: windowQuery, profileID: requestedProfileID)
+            let windowReferences = requestedRepositoryRevision != nil && currentQuestion != nil
+                ? [] : await kb.search(query: windowQuery, profileID: requestedProfileID)
             guard isActive, !Task.isCancelled else { return }
             for reference in windowReferences
             where !references.contains(where: {
@@ -481,7 +484,7 @@ final class CallAnalysisEngine {
         // the same evidence the user is already looking at (it only sees the
         // cosine top 4; Jev looked at 8).
         for pending in pendingExcerpts.reversed()
-        where !references.contains(where: { $0.text == pending.chunk.text }) {
+        where requestedRepositoryRevision == nil && !references.contains(where: { $0.text == pending.chunk.text }) {
             references.insert(pending.chunk, at: 0)
         }
 
@@ -508,7 +511,8 @@ final class CallAnalysisEngine {
             previousCallIsPrivate: previousCallIsPrivate,
             forceLocal: forceLocal,
             reviewedCatalog: reviewedCatalog,
-            answerTrace: answerTrace
+            answerTrace: answerTrace,
+            repositoryRevision: requestedRepositoryRevision
         ).preparingReviewedFacts()
         answerTrace?.mark(.retrievalDone)
 
@@ -636,7 +640,8 @@ final class CallAnalysisEngine {
                    !seenDocumentAnswers.insert(identity).inserted { return nil }
                 let insight = Insight(kindKey: draft.kindKey, title: draft.title, detail: draft.detail,
                                       callTime: anchorTime, source: draft.source, reply: draft.reply,
-                                      evidenceFactCitations: draft.evidenceFactCitations)
+                                      evidenceFactCitations: draft.evidenceFactCitations,
+                                      repositoryCitations: draft.repositoryCitations)
                 if draft.answerKey != nil { documentAnswerInsightIDs.insert(insight.id) }
                 return insight
             }

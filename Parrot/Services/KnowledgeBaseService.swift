@@ -22,8 +22,26 @@ final class KnowledgeBaseService {
     private var reviewedCatalog: ReviewedAnswerCatalog?
     private var reviewedCatalogError: String?
     private var hasReviewedCatalog = false
+    private(set) var repositorySource: RepositoryKnowledge?
+    private(set) var repositoryError: String?
+    private var repositoryConfigured = false
+    private var repositoryPassages: [RepositoryKnowledge.Passage] = []
+    private var repositoryTerms: [[String]] = []
+    private var repositoryContentRevision: String?
+    private var documentGeneration = UUID()
 
-    var isEmpty: Bool { documents.isEmpty }
+    /// Configured-but-unreadable source stays strict; never falls back to the
+    /// old catalog or general knowledge after a corrupt restore.
+    var repositoryRevision: String? {
+        repositoryConfigured ? (repositoryContentRevision ?? "unavailable") + ":" + documentGeneration.uuidString : nil
+    }
+    var repositoryStatus: String? {
+        guard repositoryConfigured else { return nil }
+        guard let source = repositorySource else { return repositoryError ?? "Code source unavailable. Re-import its snapshot." }
+        return "Code first: \(source.repository) @ \(source.commit.prefix(8)); \(source.files.count) source files. Documents are secondary."
+    }
+
+    var isEmpty: Bool { documents.isEmpty && !repositoryConfigured }
 
     private let persistent: Bool
     private let embeddingsEnabled: Bool
@@ -39,6 +57,7 @@ final class KnowledgeBaseService {
         if persistent {
             load()
             loadReviewedCatalog()
+            loadRepositorySource()
             if QASetupLaunch.permitsMeetingWork { Task { await refreshEmbeddings() } }
         }
     }
@@ -314,7 +333,8 @@ final class KnowledgeBaseService {
     /// The documents the Assistant can quote on a call of this type
     /// (nil = every document that isn't off). Mirrors `search`.
     func documentsInPlay(for profileID: UUID?) -> [String] {
-        documents.filter { isInPlay($0, callType: profileID) }.map(\.name)
+        let code = repositorySource?.files.map { repositorySource!.repository + "/" + $0.path } ?? []
+        return code + documents.filter { isInPlay($0, callType: profileID) }.map(\.name)
     }
 
     var reviewedAnswerStatus: String? {
@@ -329,6 +349,8 @@ final class KnowledgeBaseService {
     }
 
     func reviewedAnswerSnapshot(for profileID: UUID?) -> ReviewedAnswerCatalog.Snapshot? {
+        // Explicit code mode supersedes preserved reviewed-answer libraries.
+        guard !repositoryConfigured else { return nil }
         guard hasReviewedCatalog else { return nil }
         guard let reviewedCatalog else {
             return .unavailable(reviewedCatalogError ?? "Reviewed library unavailable")
@@ -386,17 +408,92 @@ final class KnowledgeBaseService {
 
     // MARK: - Retrieval
 
+    private var repositoryURL: URL {
+        indexURL.deletingLastPathComponent().appendingPathComponent("repository-source.parrotrepo")
+    }
+    private var repositoryRequiredURL: URL {
+        repositoryURL.appendingPathExtension("required")
+    }
+
+    /// Separate importer: package.json/config.json inside the export remain
+    /// original code, and never enter reviewed-catalog decoding or basename IDs.
+    func importRepositorySource(at url: URL) throws {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        let size = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+        guard size.isRegularFile == true, let bytes = size.fileSize,
+              bytes <= RepositoryKnowledge.maximumBytes else { throw RepositoryKnowledge.Failure.invalid("package size/type") }
+        try installRepositorySource(Data(contentsOf: url))
+    }
+
+    func installRepositorySource(_ data: Data) throws {
+        let candidate = try RepositoryKnowledge.decode(data)
+        let passages = candidate.passages()
+        guard !passages.isEmpty else { throw RepositoryKnowledge.Failure.invalid("empty index") }
+        // Record intent before publishing new bytes. A failed first setup stays
+        // unavailable/strict in this session; failed replacement keeps old code.
+        repositoryConfigured = true
+        if persistent {
+            try FileManager.default.createDirectory(at: repositoryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("repository-first-v1\n".utf8).write(to: repositoryRequiredURL, options: .atomic)
+            try data.write(to: repositoryURL, options: .atomic)
+            guard try Data(contentsOf: repositoryURL) == data else { throw RepositoryKnowledge.Failure.invalid("readback") }
+        }
+        // No await or partial publication: all questions see the old or new index.
+        repositorySource = candidate
+        repositoryPassages = passages
+        repositoryTerms = passages.map { Self.lexicalTokens(RepositoryKnowledge.tokens($0.searchText).joined(separator: " ")) }
+        repositoryContentRevision = candidate.revision
+        repositoryConfigured = true
+        repositoryError = nil
+    }
+
+    private func loadRepositorySource() {
+        let exists = FileManager.default.fileExists(atPath: repositoryURL.path)
+        guard exists || FileManager.default.fileExists(atPath: repositoryRequiredURL.path) else { return }
+        repositoryConfigured = true
+        do {
+            // Migrate a pre-marker snapshot before using it. Losing the source
+            // later must not switch the app back to a preserved reply catalog.
+            try Data("repository-first-v1\n".utf8).write(to: repositoryRequiredURL, options: .atomic)
+            let values = try repositoryURL.resourceValues(forKeys: [.fileSizeKey])
+            guard let size = values.fileSize, size <= RepositoryKnowledge.maximumBytes else {
+                throw RepositoryKnowledge.Failure.invalid("stored package size")
+            }
+            let source = try RepositoryKnowledge.decode(Data(contentsOf: repositoryURL))
+            repositorySource = source
+            repositoryPassages = source.passages()
+            repositoryTerms = repositoryPassages.map { Self.lexicalTokens(RepositoryKnowledge.tokens($0.searchText).joined(separator: " ")) }
+            repositoryContentRevision = source.revision
+        } catch { repositoryError = error.localizedDescription }
+    }
+
+    private func searchRepository(query: String, topK: Int) async -> [KBReference] {
+        let passages = repositoryPassages, terms = repositoryTerms
+        let order = await Task.detached(priority: .userInitiated) {
+            Self.bm25Order(query: Self.lexicalTokens(RepositoryKnowledge.tokens(query).joined(separator: " ")), documents: terms)
+        }.value
+        return order.prefix(min(6, max(0, topK))).map {
+            let passage = passages[$0]
+            return KBReference(documentName: passage.citation.sourceName, note: nil,
+                text: passage.text, repositoryCitation: passage.citation)
+        }
+    }
+
     /// Returns the best-matching chunks for the recent conversation, joined with
     /// each document's current note. Pass `profileID` to restrict to documents
     /// tagged into that profile; `nil` searches all (back-compat).
     func search(query: String, profileID: UUID? = nil, topK: Int = 4,
                 contextNeighbors: Int = 0) async -> [KBReference] {
-        guard !chunks.isEmpty, !query.isEmpty else { return [] }
+        guard !query.isEmpty else { return [] }
+        guard !repositoryConfigured || repositorySource != nil else { return [] }
+        let code = repositoryConfigured ? await searchRepository(query: query, topK: max(1, topK)) : []
+        guard !chunks.isEmpty else { return code }
 
         // Only documents this call type may use (nil = every document not off).
         let allowedNames = Set(documents.filter { isInPlay($0, callType: profileID) }.map(\.name))
         let snapshot = chunks.filter { allowedNames.contains($0.documentName) }
-        guard !snapshot.isEmpty else { return [] }
+        guard !snapshot.isEmpty else { return code }
         let notesByDocument = Dictionary(
             documents.map { ($0.name, $0.note) },
             uniquingKeysWith: { first, _ in first }
@@ -444,11 +541,14 @@ final class KnowledgeBaseService {
                 .map { snapshot[$0] }
         }.value
 
-        return best.map { chunk in
+        let secondary = best.map { chunk in
             let note = notesByDocument[chunk.documentName]?.nilIfEmpty
             return KBReference(documentName: chunk.documentName, note: note,
                 text: Self.contextText(for: chunk, in: snapshot, neighbors: contextNeighbors))
         }
+        // Code keeps all primary slots. A small supporting-document budget
+        // cannot displace implementation passages, even on a keyword tie.
+        return repositoryConfigured ? code + Array(secondary.prefix(2)) : secondary
     }
 
     /// Keep adjacent instructions/conditions with a retrieved excerpt. The
@@ -810,6 +910,7 @@ final class KnowledgeBaseService {
     }
 
     private func save() {
+        documentGeneration = UUID()
         guard persistent else { return }
         guard let data = try? JSONEncoder().encode(
             Store(version: 2, documents: documents, folders: folders, chunks: chunks)) else { return }

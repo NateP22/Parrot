@@ -1724,6 +1724,8 @@ struct StoredInsightRow: View {
                         .textSelection(.enabled)
                 }
 
+                RepositorySourceLinks(citations: insight.repositoryCitations ?? [])
+
                 if let source = insight.source {
                     Label(source, systemImage: source == "general knowledge" ? "globe" : "doc.text")
                         .font(.appCaption2)

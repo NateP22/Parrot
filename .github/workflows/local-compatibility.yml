@@ -77,6 +77,9 @@ jobs:
           python3 -B scripts/test-reviewed-facts.py | tee source-grounded-evidence/reviewed-facts.log
           python3 -B scripts/test-catalog-signer.py | tee source-grounded-evidence/catalog-signer.log
           python3 -B scripts/test-profile-runner.py | tee source-grounded-evidence/profile-runner.log
+          python3 -B scripts/test-export-repository-knowledge.py 2>&1 | tee source-grounded-evidence/repository-export.log
+          swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" -sdk "$(xcrun --sdk macosx --show-sdk-path)" Parrot/Services/RepositoryKnowledge.swift scripts/repository-knowledge-test.swift -o source-grounded-evidence/repository-component-tests
+          source-grounded-evidence/repository-component-tests | tee source-grounded-evidence/repository-components.log
           if [[ '${{ inputs.cross_compile_arm64 }}' == true || '${{ inputs.arm_setup_only }}' == true || '${{ inputs.source_checks_only }}' == true ]]; then
             swiftc -parse-as-library -target arm64-apple-macosx14.0 -sdk "$(xcrun --sdk macosx --show-sdk-path)" scripts/catalog-sign.swift -o source-grounded-evidence/catalog-signer-arm64
             shasum -a 256 source-grounded-evidence/catalog-signer-arm64 > source-grounded-evidence/catalog-signer-arm64.sha256

@@ -141,7 +141,7 @@ extension Redactor {
             currentQuestion: r.currentQuestion.map { redact($0) },
             knownInsightTitles: r.knownInsightTitles.map { redact($0) },
             references: r.references.map { KBReference(documentName: $0.documentName, note: $0.note,
-                                                       text: redact($0.text)) },
+                                                       text: redact($0.text), repositoryCitation: $0.repositoryCitation) },
             instructions: r.instructions,
             callBrief: redact(r.callBrief),
             allowGeneralKnowledge: r.allowGeneralKnowledge,
@@ -156,6 +156,7 @@ extension Redactor {
         copy.forceLocal = r.forceLocal
         copy.reviewedCatalog = r.reviewedCatalog
         copy.answerTrace = r.answerTrace
+        copy.repositoryRevision = r.repositoryRevision
         copy.reviewedQuestionKey = r.reviewedQuestionKey ?? r.currentQuestion
         copy.reviewedFactContext = r.reviewedFactContext?.redacting { redact($0) }
         if let catalog = r.reviewedCatalog, catalog.mode == .wholeReply {
@@ -180,6 +181,7 @@ extension Redactor {
         guard original.count == redacted.count, selected.count == selectedIndices.count else { return nil }
         func same(_ a: KBReference, _ b: KBReference) -> Bool {
             a.documentName == b.documentName && a.note == b.note && a.text == b.text
+                && a.repositoryCitation == b.repositoryCitation
         }
         var restored: [KBReference] = []
         var indices: [Int] = []
@@ -207,7 +209,8 @@ extension Redactor {
                              answerKey: d.answerKey.map { restore($0) },
                              evidenceSources: d.evidenceSources, evidenceReferences: d.evidenceReferences,
                              evidenceReferenceIndices: d.evidenceReferenceIndices,
-                             evidenceFactCitations: d.evidenceFactCitations)
+                             evidenceFactCitations: d.evidenceFactCitations,
+                             repositoryCitations: d.repositoryCitations)
                 func rejected() -> InsightDraft {
                     ClaudeAnalysisProvider.applyingEvidenceReview(restored, approved: false)
                 }
@@ -227,13 +230,15 @@ extension Redactor {
                     // Canonical literals such as [EMAIL_1] must remain byte-exact.
                     restored = InsightDraft(kindKey: restored.kindKey, title: restored.title,
                         detail: zip(evidence.indices, evidence.references).map {
-                            "[p\($0.0)] \($0.1.documentName)\n\($0.1.text)"
+                            "[p\($0.0)] \($0.1.repositoryCitation?.label ?? $0.1.documentName)\n\($0.1.text)"
                         }.joined(separator: "\n\n"), source: d.source, reply: restored.reply,
                         supersedes: restored.supersedes,
                         evidenceQuote: evidence.references.map(\.text).joined(separator: "\n\n"),
                         answerKey: restored.answerKey, evidenceSources: d.evidenceSources,
                         evidenceReferences: evidence.references, evidenceReferenceIndices: evidence.indices,
-                        evidenceFactCitations: d.evidenceFactCitations)
+                        evidenceFactCitations: d.evidenceFactCitations,
+                        repositoryCitations: evidence.references.contains { $0.repositoryCitation != nil }
+                            ? evidence.references.compactMap(\.repositoryCitation) : nil)
                 }
                 return restored
             },

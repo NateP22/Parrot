@@ -1078,7 +1078,9 @@ final class RecordingManager {
                                                          source: $0.source, reply: $0.reply,
                                                          callTime: $0.callTime, cardDetail: $0.detail,
                                                          factCitations: $0.evidenceFactCitationsData == nil
-                                                            ? nil : ($0.evidenceFactCitations ?? []))
+                                                            ? nil : ($0.evidenceFactCitations ?? []),
+                                                         repositoryCitations: $0.repositoryCitationsData == nil
+                                                            ? nil : ($0.repositoryCitations ?? []))
         }
         let instructions = meeting.profile?.tone ?? (UserDefaults.standard.string(forKey: "copilotInstructions") ?? "")
         let counterpart = meeting.profile?.counterpart ?? "the other person"

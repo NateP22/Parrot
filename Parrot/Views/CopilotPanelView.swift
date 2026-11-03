@@ -433,6 +433,7 @@ struct PinnedBlockerRow: View {
 
                 if let reply = insight.reply, reply != insight.detail {
                     if expanded {
+                        RepositorySourceLinks(citations: insight.repositoryCitations ?? [])
                         Text(insight.detail)
                             .font(Theme.Typography.secondary)
                             .foregroundStyle(Theme.Colors.ink3)
@@ -557,6 +558,7 @@ struct HeroInsightCard: View {
 
             if let reply = insight.reply, reply != insight.detail {
                 if showsDetails {
+                    RepositorySourceLinks(citations: insight.repositoryCitations ?? [])
                     Text(insight.detail)
                         .font(Theme.Typography.secondary)
                         .foregroundStyle(Theme.Colors.ink2)
@@ -615,6 +617,18 @@ struct HeroInsightCard: View {
 }
 
 // MARK: - Insight Card (history rows)
+
+/// Exact app-owned commit/line links stay in Details, leaving the spoken answer short.
+struct RepositorySourceLinks: View {
+    let citations: [RepositoryCitation]
+    var body: some View {
+        ForEach(Array(citations.enumerated()), id: \.offset) { _, citation in
+            Link(citation.label, destination: citation.url)
+                .font(Theme.Typography.caption)
+                .foregroundStyle(Theme.Colors.accent)
+        }
+    }
+}
 
 struct InsightCard: View {
     let insight: Insight
@@ -730,6 +744,8 @@ struct InsightCard: View {
             if let reply = insight.reply {
                 SuggestedReplyBox(reply: reply)
             }
+
+            RepositorySourceLinks(citations: insight.repositoryCitations ?? [])
 
             if let source = insight.source {
                 Label(source, systemImage: source == "general knowledge" ? "globe" : "doc.text")

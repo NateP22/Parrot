@@ -10,6 +10,8 @@ struct KnowledgeSettingsView: View {
     @Query(sort: \CallProfile.sortOrder) private var profiles: [CallProfile]
     @State private var search = ""
     @State private var importing = false
+    @State private var importingRepository = false
+    @State private var repositoryImportError: String?
     /// The folder the file picker adds into (nil = No folder).
     @State private var importFolder: UUID?
     @State private var deleting: KBFolder?
@@ -24,6 +26,18 @@ struct KnowledgeSettingsView: View {
 
     var body: some View {
         SettingsPage {
+            SettingsCard(title: "Code source", blurb: "Original GitHub code answers first. Documents below provide supporting context. Re-import a verified snapshot to refresh the code before a call.") {
+                SettingsRow(first: true) {
+                    VStack(alignment: .leading, spacing: Theme.Metrics.controlGap) {
+                        Text(kb.repositoryStatus ?? "No repository snapshot imported.")
+                            .font(Theme.Typography.secondary)
+                        Button("Import code snapshot…") { importingRepository = true }
+                        if let error = repositoryImportError {
+                            Text(error).font(Theme.Typography.secondary).foregroundStyle(Theme.Colors.warn)
+                        }
+                    }
+                }
+            }
             SettingsCard(
                 title: "Documents",
                 blurb: "Stored on this Mac. Relevant passages or reviewed replies are shared with your chosen AI when cloud analysis is on."
@@ -57,6 +71,16 @@ struct KnowledgeSettingsView: View {
                     section(nil, docs: loose)
                 }
             }
+        }
+        .fileImporter(
+            isPresented: $importingRepository,
+            allowedContentTypes: [.data], allowsMultipleSelection: false
+        ) { result in
+            do {
+                guard let url = try result.get().first else { return }
+                try kb.importRepositorySource(at: url)
+                repositoryImportError = nil
+            } catch { repositoryImportError = error.localizedDescription }
         }
         .fileImporter(
             isPresented: $importing,

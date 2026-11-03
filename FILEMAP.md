@@ -12,6 +12,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ProfileTest.swift` | 6565 | --profile-test: grounding, imported-text fingerprints, signed-catalog boundary checks, source/report and urgent-question guards |
 | `Parrot/ProfileTest+ReviewedAnswers.swift` | 97 | Signed synthetic fixtures for catalog authenticity, exact text/hash/version, scope, malformed data and short-reply boundaries |
 | `Parrot/ProfileTest+ReviewedFacts.swift` | candidate | Fresh disk-store provenance round trip and report quote suppression; old-schema/native migration remains separate |
+| `Parrot/ProfileTest+RepositoryKnowledge.swift` | 210 | Fictional code snapshot through actual KB, redacted provider/reviewer transport, private/ambient holds, required-intent recovery, citation store/reports; no actual model/native acceptance |
 | `Parrot/ProfileTest+ReviewedScope.swift` | 100 | Signed synthetic v2 authority/scope/form, forced wrong-ID, ambiguity, metadata-tamper and v1 persistence boundaries |
 | `Parrot/ProfileTest+ReviewedFormContext.swift` | 132 | Fictional general/state, clause-local conditions, owned-input and quoted-content regressions |
 | `Parrot/ProfileTest+ReviewedScopeAliases.swift` | 90 | Signed synthetic alias bounds, actual catalog admission, compound partial-answer rejection and off-source topic preservation |
@@ -48,6 +49,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 
 | File | L | Purpose |
 |---|---|---|
+| `Services/RepositoryKnowledge.swift` | 165 | Original code snapshot validation, Git blob/SHA checks, path/secret exclusions, line-preserving passages and app-owned commit/line citations; no network or credentials |
 | `Services/RecordingManager.swift` | 1504 | Orchestrates a recording session end-to-end; the hub; echo dedupe (`isBleed` drops a Me line whose words mostly repeat an other-side line close by, scored on the Me line so their short word can't delete mine, a 1-2 word line only once the echo gate heard the speakers; `strippingEcho` cuts their words out of a Me line once the call's echo gate has fired; `dedupedEcho` does both for the post-call polish); `justFinished` (the window's "Call saved" sheet); `writeReport` (Write report on a saved meeting, attributed AI card/source/reply receipts); `writeAbout` (AI title + About after the report, backfilled on open); "Still recording?" reminder; live speaker sweeps (stable/window mapping, power pacing) |
 | `Services/CallAbout.swift` | 100 | Pure: the title + "About this call" prompt (misheard-name rule), report or transcript opening as input, JSON / "Title:" line parsing and clipping |
 | `Services/AudioCaptureManager.swift` | 1120 | System audio (authorized SCK, exact macOS 26.5.1 SCK compatibility route, otherwise 15+ tap) + mic tap, buffer conversion; once-a-minute echo log with the mic volume slider; `PARROT_AEC_DUMP=1` saves the canceller's raw mic + paired reference (`AECDump`) |

@@ -164,4 +164,5 @@ struct KBReference {
     let documentName: String
     let note: String?
     let text: String
+    var repositoryCitation: RepositoryCitation? = nil
 }

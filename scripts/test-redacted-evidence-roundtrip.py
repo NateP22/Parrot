@@ -6,6 +6,7 @@ baseline; compilation failure never counts as the expected regression failure.
 """
 import argparse
 from pathlib import Path
+import platform
 import subprocess
 import tempfile
 
@@ -41,6 +42,7 @@ provider = read("Parrot/Services/AnalysisProvider.swift")
 switching = read("Parrot/Services/OpenAICompatibleProvider.swift")
 kb = read("Parrot/Models/KnowledgeBase.swift")
 subject = redactor[:redactor.index("// MARK: - Requests and results")]
+subject += "\n" + (root / "Parrot/Services/RepositoryKnowledge.swift").read_text()
 # Historical implementation runs against today's transport structures; the
 # extra optional index field defaults to nil in the old restoration method.
 # This is an old-function regression control, never an old full-app execution.
@@ -211,7 +213,9 @@ with tempfile.TemporaryDirectory(prefix="parrot-evidence-roundtrip-") as tmp:
     directory = Path(tmp)
     (directory / "Subject.swift").write_text(subject)
     (directory / "main.swift").write_text(main)
-    compiled = subprocess.run(["swiftc", str(directory / "Subject.swift"), str(directory / "main.swift"),
+    compiled = subprocess.run(["swiftc", "-target", platform.machine() + "-apple-macosx14.0",
+                               "-sdk", subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip(),
+                               str(directory / "Subject.swift"), str(directory / "main.swift"),
                                "-o", str(directory / "checks")], text=True, capture_output=True)
     if compiled.returncode:
         print(compiled.stdout, end="")

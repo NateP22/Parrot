@@ -6,6 +6,7 @@ Production trust is never changed. No network, credentials, client corpus or gol
 answers are used. These checks do not establish model judgment or native acceptance.
 """
 from pathlib import Path
+import platform
 import subprocess
 import tempfile
 
@@ -45,7 +46,7 @@ subject += "\n" + "\n".join(structure(n) for n in ("InsightDraft", "AnalysisRequ
 subject += "\nenum ClaudeAnalysisProvider {\n"
 for name in ("model", "directAnswerKinds", "checkFirstMessage"):
     subject += next(line for line in provider.splitlines() if "static let " + name in line) + "\n"
-for name in ("strictAnswerSystemPrompt", "reviewedFactRule", "evidenceReviewPrompt"):
+for name in ("strictAnswerSystemPrompt", "reviewedFactRule", "repositorySourceRule", "evidenceReviewPrompt"):
     subject += literal(name) + "\n"
 for name in ("strictAnswerKind", "evidenceItems", "strictPrompt", "strictAnswerContent",
              "parseStrictAnswer", "isConciseSpokenReply", "isActionableAbstention",
@@ -400,7 +401,7 @@ with tempfile.TemporaryDirectory(prefix="parrot-reviewed-facts-") as directory:
     files = []
     for relative in ("Services/ReviewedAnswerCatalog.swift", "Services/ReviewedFacts.swift",
                      "Services/ReviewedQuestionScope.swift", "Models/KnowledgeBase.swift",
-                     "Services/ReviewedAnswerStore.swift", "Services/Redactor.swift"):
+                     "Services/ReviewedAnswerStore.swift", "Services/Redactor.swift", "Services/RepositoryKnowledge.swift"):
         content = (root / "Parrot" / relative).read_text()
         if relative.endswith("ReviewedAnswerCatalog.swift"):
             production_line = next(line for line in content.splitlines() if "static let verificationKeyBase64 =" in line)
@@ -411,7 +412,9 @@ with tempfile.TemporaryDirectory(prefix="parrot-reviewed-facts-") as directory:
     (temp / "Subject.swift").write_text(subject)
     (temp / "main.swift").write_text(main)
     binary = temp / "checks"
-    subprocess.run(["swiftc", "-swift-version", "5", "-module-cache-path", str(temp / "module-cache"),
+    subprocess.run(["swiftc", "-swift-version", "5", "-target", platform.machine() + "-apple-macosx14.0",
+                    "-sdk", subprocess.check_output(["xcrun", "--sdk", "macosx", "--show-sdk-path"], text=True).strip(),
+                    "-module-cache-path", str(temp / "module-cache"),
                     *files, str(temp / "Subject.swift"), str(temp / "main.swift"), "-o", str(binary)],
                    check=True, timeout=180)
     raise SystemExit(subprocess.run([str(binary)], timeout=30).returncode)
