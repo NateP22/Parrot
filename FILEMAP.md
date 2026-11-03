@@ -86,7 +86,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ProfileTest+ReviewedSelectorEval.swift` | 110 | Fictional response/correlation/duplicate-key diagnostic regressions; no provider calls, key access or native answer proof |
 | `Parrot/QASetupSelfCheck.swift` | 55 | Bundled --qa-setup --qa-setup-self-check exercises actual disabled speech/diarization/Ollama/embedding owners; component-only, no keys/audio/store |
 | `Services/QASetupLaunch.swift` | 65 | Immutable exact-QA setup admission and shared recording/model refusal; normal meeting launch preserved, no readiness claim |
-| `Views/QASetupView.swift` | 25 | Existing real API-key/profile Settings in a labeled lightweight QA-only scene; no onboarding bypass persisted |
+| `Views/QASetupView.swift` | 25 | Existing API-key, Knowledge and profile Settings in a labeled lightweight QA-only scene; models/recording remain off |
 | `Views/QANativeAnswerProbe.swift` | 45 | Resolves actual Copilot NSView window and renders QA-only runtime question/Insight UUIDs beside the reply; no fixture/gold routing |
 | `Parrot/ProfileTest+AudioTrace.swift` | 95 | Pure raw audio-clock, stale epoch, padding, continuity/cap/overflow regressions; no audio capture or native timing acceptance |
 | `Services/OpenAICompatibleProvider.swift` | 686 | OpenAI-shaped backends/factory; reviewed-library fail-closed fallback and original reviewed reply/evidence preservation |
@@ -216,6 +216,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/test-native-credential-runner.py` | Runner ordering/identity/recovery/privacy/cleanup checks and fictional child timeout/reaping; no real credentials |
 | `scripts/test-native-credential-probe.py` | Actual phase/report code with link-fenced mock Security calls, plus Swift JSON to real Python validator contract |
 | `scripts/test-selector-credential-policy.py` | Actual selector key-read block and background forwarding with link-fenced Security shims; refuses UI suppression failures, locked/missing own keys, preserves ordinary defaults; no real credentials |
+| `scripts/test-automatic-credential-policy.py` | Actual key-store source against inert Security calls: implicit no-UI reads, legacy suppression/restore, stale returns, bounded pending UI waiter and denied-read cache; no real credentials/native acceptance |
 | `scripts/test-reviewed-form-context.py` | Bounded actual-source run of existing fictional condition/state/quote routing regressions; no app, credentials, models, provider score or native acceptance |
 | `scripts/test-document-review-context.py` | Actual strict request/review functions with inert transport; follow-up context parity, data bounds, cancellation and failure controls; no model/native acceptance |
 | `scripts/test-reviewed-facts.py` | Actual fact admission/chunker/request/parser/privacy/store source; heading-whitespace nomination and unchanged citation controls, synthetic trust root/inert verdicts; no model/native acceptance |

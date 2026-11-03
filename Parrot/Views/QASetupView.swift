@@ -8,7 +8,7 @@ struct QASetupView: View {
     @State private var meetingModeScheduled = QASetupLaunch.meetingModeNextTime
     var body: some View {
         VStack(spacing: 0) {
-            Text("Setup only: keys and profiles. Models and recording are off. Quit and reopen normally for meetings.")
+            Text("Setup only: keys, knowledge and profiles. Models and recording are off. Quit and reopen normally for meetings.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding()
@@ -24,7 +24,7 @@ struct QASetupView: View {
             }
             Divider()
             SettingsView(isEmbedded: true, initialSection: .apiKeys,
-                         visibleSections: [.apiKeys, .profiles])
+                         visibleSections: [.apiKeys, .knowledge, .profiles])
         }
         .task { recordingManager.prepareForQASetup(modelContext: modelContext) }
     }

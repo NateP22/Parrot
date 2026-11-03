@@ -11,6 +11,7 @@ import tempfile
 import plistlib
 import shutil
 import os
+import platform
 
 root = Path(__file__).resolve().parents[1]
 source = (root / 'Parrot/Services/AnalysisProvider.swift').read_text()
@@ -19,12 +20,18 @@ with tempfile.TemporaryDirectory(prefix='parrot-keychain-regression-') as temp:
     temp = Path(temp)
     (temp / 'APIKeyStoreUnderTest.swift').write_text(
         'import Foundation\nimport Security\nimport LocalAuthentication\nimport os\n' + helper)
-    (temp / 'main.swift').write_text((root / 'scripts/credential-regression.swift').read_text())
+    checks = (root / 'scripts/credential-regression.swift').read_text()
+    boundary = checks.index('if CommandLine.arguments.contains("--no-ui-tests")')
+    # Exercise synchronous store checks on a worker, as real background loads
+    # now require. The main dispatcher remains available for async branches.
+    checks = checks[:boundary] + '\nfunc runRegression() {\n' + checks[boundary:].replace('dispatchMain()', 'return') + '\n}\nDispatchQueue.global().async { runRegression() }\ndispatchMain()\n'
+    (temp / 'main.swift').write_text(checks)
     binary = temp / 'credential-tests'
-    subprocess.run(['swiftc', '-swift-version', '5', str(temp / 'APIKeyStoreUnderTest.swift'),
+    sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip()
+    subprocess.run(['swiftc', '-swift-version', '5', '-target', platform.machine() + '-apple-macosx14.0', '-sdk', sdk, str(temp / 'APIKeyStoreUnderTest.swift'),
                     str(temp / 'main.swift'), '-o', str(binary)], check=True)
     undefined = subprocess.check_output(['nm', '-u', str(binary)], text=True)
-    for name in ['SecItemCopyMatching', 'SecItemAdd', 'SecItemUpdate', 'SecItemDelete']:
+    for name in ['SecItemCopyMatching', 'SecItemAdd', 'SecItemUpdate', 'SecItemDelete', 'SecKeychainSetUserInteractionAllowed', 'SecKeychainGetUserInteractionAllowed']:
         if '_' + name in undefined:
             raise SystemExit('Refusing to run a regression binary linked to real ' + name)
     print('Verified: no real SecItem function calls are linked', flush=True)

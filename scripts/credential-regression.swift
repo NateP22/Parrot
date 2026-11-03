@@ -17,6 +17,18 @@ var services: [String] = []
 var dataRequests: [String: [Bool]] = [:]
 var interactionRequests: [Bool?] = []
 var afterRead: [String: () -> Void] = [:]
+var readInteractionRequests: [Bool?] = []
+#if !PARROT_CUSTOM_LEGACY_SHIMS
+var fakeLegacyInteraction = true
+func SecKeychainSetUserInteractionAllowed(_ value: Bool) -> OSStatus {
+    fakeLegacyInteraction = value
+    return errSecSuccess
+}
+func SecKeychainGetUserInteractionAllowed(_ value: UnsafeMutablePointer<DarwinBoolean>) -> OSStatus {
+    value.pointee = DarwinBoolean(fakeLegacyInteraction)
+    return errSecSuccess
+}
+#endif
 
 func account(_ query: CFDictionary) -> String {
     let context = (query as NSDictionary)[kSecUseAuthenticationContext] as? LAContext
@@ -26,6 +38,7 @@ func account(_ query: CFDictionary) -> String {
 }
 func SecItemCopyMatching(_ query: CFDictionary, _ output: UnsafeMutablePointer<CFTypeRef?>?) -> OSStatus {
     let name = account(query)
+    readInteractionRequests.append(((query as NSDictionary)[kSecUseAuthenticationContext] as? LAContext)?.interactionNotAllowed)
     reads[name, default: 0] += 1
     dataRequests[name, default: []].append((query as NSDictionary)[kSecReturnData] as? Bool ?? false)
     if let status = blockedReads[name] { return status }
@@ -85,8 +98,7 @@ if CommandLine.arguments.contains("--settings-lookup-tests") {
         check("locked settings read is authorization-needed, never missing", locked == .needsAuthorization)
         let readCount = reads["settings-locked", default: 0]
         _ = await APIKeyStore.settingsKey(account: "settings-locked")
-        check("ordinary refresh never retries a cached failed secret read", reads["settings-locked"] == readCount + 1)
-        // metadataStatus is deliberately uncached; only that query repeats.
+        check("ordinary refresh never retries a cached failed lookup", reads["settings-locked"] == readCount)
         records["settings-locked"] = Data("public-existing-fixture".utf8)
         blockedReads.removeValue(forKey: "settings-locked")
         let retried = await APIKeyStore.settingsKey(account: "settings-locked", requestAuthorization: true)
@@ -209,7 +221,7 @@ check("create-only save adds a missing entry", APIKeyStore.save("public-probe", 
 check("create-only new entry does not use update", updates["create-only-new", default:0] == 0 && additions["create-only-new"] == 1)
 
 let expectedService = Bundle.main.object(forInfoDictionaryKey: "ParrotKeychainService") as? String ?? "com.uygar.parrot"
-check("normal calls preserve the existing interaction query policy", interactionRequests.allSatisfy { $0==nil })
+check("automatic reads forbid authentication UI", readInteractionRequests.allSatisfy { $0==true })
 check("all Security operations stay in the configured service", !services.isEmpty && services.allSatisfy { $0 == expectedService })
 
 print(failures == 0 ? "ALL CREDENTIAL REGRESSIONS PASS" : "CREDENTIAL REGRESSION FAILURES: \(failures)")

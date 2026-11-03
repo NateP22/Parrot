@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Execute the actual selector key-read block against inert Security shims."""
 from pathlib import Path
-import os, plistlib, shutil, subprocess, tempfile
+import os, platform, plistlib, shutil, subprocess, tempfile
 
 root = Path(__file__).resolve().parents[1]
 selector = (root / "Parrot/ReviewedSelectorEval.swift").read_text()
@@ -42,16 +42,16 @@ Task { @MainActor in
     if scenario != "missing" { records["claude-api-key"] = Data(fixture.utf8) }
     if scenario == "locked" { blockedReads["claude-api-key"] = errSecInteractionNotAllowed }
     if scenario == "ordinary-default" {
-        check("ordinary background load retains normal policy", await APIKeyStore.loadInBackground() == fixture)
-        check("ordinary default has no forced no-UI context", interactionRequests.count == 1 && interactionRequests[0] == nil)
-        check("ordinary background load does not change legacy UI", legacySetCalls == 0 && legacyGetCalls == 0)
+        check("ordinary background load retains saved key", await APIKeyStore.loadInBackground() == fixture)
+        check("ordinary default forbids modern UI", interactionRequests.count == 1 && interactionRequests[0] == true)
+        check("ordinary default checks legacy UI suppression", legacyGetCalls > 0)
     } else {
         var received: String?
         do { received = try await selectorKey() } catch { }
         let suppressed = ["set-failed", "get-failed", "still-enabled"].contains(scenario)
         check("unavailable or suppression failure refuses the key", scenario == "success" ? received == fixture : received == nil)
         check("legacy suppression is always requested", legacySetCalls == 1)
-        check("legacy readback follows successful set only", legacyGetCalls == (scenario == "set-failed" ? 0 : 1))
+        check("legacy readback and actual read suppression are checked", legacyGetCalls == (scenario == "set-failed" ? 0 : (suppressed ? 1 : 2)))
         check("suppression failure never reads a credential", reads.values.reduce(0,+) == (suppressed ? 0 : 1))
         check("every actual selector item query forbids UI", interactionRequests.count == (suppressed ? 0 : 1) && interactionRequests.allSatisfy { $0 == true })
     }
@@ -67,7 +67,8 @@ with tempfile.TemporaryDirectory(prefix="parrot-selector-credential-policy-") as
     (temp / "APIKeyStore.swift").write_text("import Foundation\nimport Security\nimport LocalAuthentication\nimport os\n" + helper)
     (temp / "main.swift").write_text(main)
     binary = temp / "checks"
-    subprocess.run(["swiftc", "-swift-version", "5", str(temp / "APIKeyStore.swift"), str(temp / "main.swift"), "-o", str(binary)], check=True, timeout=60)
+    sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip()
+    subprocess.run(["swiftc", "-D", "PARROT_CUSTOM_LEGACY_SHIMS", "-swift-version", "5", '-target', platform.machine() + '-apple-macosx14.0', '-sdk', sdk, str(temp / "APIKeyStore.swift"), str(temp / "main.swift"), "-o", str(binary)], check=True, timeout=60)
     undefined = subprocess.check_output(["nm", "-u", str(binary)], text=True, timeout=10)
     for name in ["SecItemCopyMatching", "SecItemAdd", "SecItemUpdate", "SecItemDelete", "SecKeychainSetUserInteractionAllowed", "SecKeychainGetUserInteractionAllowed"]:
         assert "_" + name not in undefined, "Refusing real Security function: " + name

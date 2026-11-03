@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import platform
 root=Path(__file__).resolve().parents[1]
 source=(root/"Parrot/Services/AnalysisProvider.swift").read_text()
 helper="import Foundation\nimport Security\nimport LocalAuthentication\nimport os\n"+source[source.index("enum APIKeyStore {"):]
@@ -89,13 +90,13 @@ let saved=run(created)
 check("write stores fixture through production API",saved.stage=="saved" && records[created.account]==Data(created.publicFixture.utf8))
 check("write requires real missing metadata without data",dataRequests[created.account]==[false])
 check("write uses atomic add only",additions[created.account]==1 && updates[created.account,default:0]==0)
-check("write verifies both UI suppression calls",setCalls==1 && getCalls==1 && saved.userInteractionDisallowed)
+check("write verifies process and per-operation suppression",setCalls==1 && getCalls==3 && saved.userInteractionDisallowed)
 let verified=run(request(.verifyCleanup,nonce:created.nonce))
 check("known fixture verification removes only owned account",verified.stage=="verified_removed" && records[created.account]==nil && deletions[created.account]==1)
 check("verification cannot claim final cleanup",!verified.cleanupVerified)
 let absent=run(request(.absent,nonce:created.nonce))
 check("uncached absent phase proves cleanup",absent.stage=="absent" && absent.cleanupVerified)
-check("each phase separately gates authentication UI",setCalls==3 && getCalls==3)
+check("each phase and its uncached operations gate authentication UI",setCalls==3 && getCalls==7)
 check("every probe item query forbids authentication UI",!interactionRequests.isEmpty && interactionRequests.allSatisfy { $0==true })
 let reportText=String(data:try! JSONEncoder().encode(saved),encoding:.utf8)!
 check("report never contains credential fixture data",!reportText.contains(created.publicFixture))
@@ -152,7 +153,11 @@ with tempfile.TemporaryDirectory(prefix="parrot-credential-probe-tests-") as dir
     (app/"Contents/Info.plist").write_bytes(plistlib.dumps(info))
     files=[temp/"API.swift",temp/"Allowed.swift",root/"Parrot/Services/QASetupLaunch.swift",
            root/"Parrot/Services/QACredentialProbePolicy.swift",root/"Parrot/QACredentialProbe.swift",temp/"main.swift"]
-    subprocess.run(["swiftc","-swift-version","5",*[str(p) for p in files],"-o",str(binary)],check=True)
+    boundary = main.index('check("valid QA metadata is eligible"')
+    main = main[:boundary] + '\nfunc runPhaseChecks() {\n' + main[boundary:] + '\n}\nDispatchQueue.global().async { runPhaseChecks() }\ndispatchMain()\n'
+    (temp/'main.swift').write_text(main)
+    sdk = subprocess.check_output(['xcrun', '--sdk', 'macosx', '--show-sdk-path'], text=True).strip()
+    subprocess.run(["swiftc","-D","PARROT_CUSTOM_LEGACY_SHIMS","-swift-version","5", '-target', platform.machine() + '-apple-macosx14.0', '-sdk', sdk, *[str(p) for p in files],"-o",str(binary)],check=True)
     undefined=subprocess.check_output(["nm","-u",str(binary)],text=True)
     for name in ["SecItemCopyMatching","SecItemAdd","SecItemUpdate","SecItemDelete",
                  "SecKeychainSetUserInteractionAllowed","SecKeychainGetUserInteractionAllowed"]:

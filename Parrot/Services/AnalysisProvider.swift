@@ -1670,9 +1670,55 @@ enum APIKeyStore {
     /// so it can't go stale inside the app.
     /// ponytail: a key changed outside the app (`security` CLI) shows after relaunch.
     private static let cache = OSAllocatedUnfairLock(initialState: [String: String?]())
+    private static let lookupStatus = OSAllocatedUnfairLock(initialState: [String: OSStatus]())
+    // The legacy UI policy is process-wide. Serialize every credential operation,
+    // including explicit writes, so one read cannot restore UI around another.
+    private static let keychainLock = NSRecursiveLock()
+    private static let pendingSettings = OSAllocatedUnfairLock(initialState: Set<String>())
+    private static let mainQueueKey: DispatchSpecificKey<UInt8> = {
+        let key = DispatchSpecificKey<UInt8>()
+        DispatchQueue.main.setSpecific(key: key, value: 1)
+        return key
+    }()
+    private static var isUIThread: Bool {
+        Thread.isMainThread || DispatchQueue.getSpecific(key: mainQueueKey) == 1
+    }
 
-    // The QA probe suppresses modern authentication UI per query as well as
-    // the legacy process switch. Normal app calls keep their existing policy.
+    private static func acquireKeychainLock() -> Bool {
+        if isUIThread { return keychainLock.try() }
+        keychainLock.lock()
+        return true
+    }
+
+    private static func keychainOperation(allowInteraction: Bool, _ operation: () -> OSStatus) -> OSStatus {
+        guard acquireKeychainLock() else { return errSecNotAvailable }
+        defer { keychainLock.unlock() }
+        guard !allowInteraction else { return operation() }
+        var previous = DarwinBoolean(true)
+        guard SecKeychainGetUserInteractionAllowed(&previous) == errSecSuccess else { return errSecNotAvailable }
+        let changed = previous.boolValue
+        if changed {
+            guard SecKeychainSetUserInteractionAllowed(false) == errSecSuccess else { return errSecNotAvailable }
+            var actual = DarwinBoolean(true)
+            guard SecKeychainGetUserInteractionAllowed(&actual) == errSecSuccess, !actual.boolValue else {
+                _ = SecKeychainSetUserInteractionAllowed(previous.boolValue)
+                return errSecNotAvailable
+            }
+        }
+        let status = operation()
+        // Restore only after the synchronous operation has actually returned,
+        // never when an async UI waiter's deadline expires.
+        if changed {
+            guard SecKeychainSetUserInteractionAllowed(previous.boolValue) == errSecSuccess else { return errSecNotAvailable }
+            var restored = DarwinBoolean(!previous.boolValue)
+            guard SecKeychainGetUserInteractionAllowed(&restored) == errSecSuccess,
+                  restored.boolValue == previous.boolValue else { return errSecNotAvailable }
+        }
+        return status
+    }
+
+    // Implicit reads suppress modern authentication UI per query as well as
+    // the scoped legacy process switch. Explicit owner actions opt in.
     private static func interactionPolicy(_ query: [String: Any], allowInteraction: Bool) -> [String: Any] {
         guard !allowInteraction else { return query }
         var result = query
@@ -1686,6 +1732,8 @@ enum APIKeyStore {
     /// or the user believes the key is saved and every call fails "missing key".
     @discardableResult
     static func save(_ key: String, account: String = "claude-api-key", replaceExisting: Bool = true, allowInteraction: Bool = true) -> Bool {
+        guard acquireKeychainLock() else { return false }
+        defer { keychainLock.unlock() }
         guard !key.isEmpty, let data = key.data(using: .utf8) else { return false }
         if !replaceExisting { return createIfAbsent(key, account: account, allowInteraction: allowInteraction) == errSecSuccess }
         if isSessionOnly {
@@ -1701,21 +1749,24 @@ enum APIKeyStore {
             kSecAttrAccount as String: account,
         ], allowInteraction: allowInteraction)
         let attributes = [kSecValueData as String: data]
-        let status = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
+        let status = keychainOperation(allowInteraction: allowInteraction) { SecItemUpdate(query as CFDictionary, attributes as CFDictionary) }
         if status == errSecItemNotFound {
             var newItem = query
             newItem[kSecValueData as String] = data
-            guard SecItemAdd(newItem as CFDictionary, nil) == errSecSuccess else { return false }
+            guard keychainOperation(allowInteraction: allowInteraction, { SecItemAdd(newItem as CFDictionary, nil) }) == errSecSuccess else { return false }
         } else if status != errSecSuccess {
             return false
         }
         cache.withLock { _ = $0.updateValue(key, forKey: account) }
+        lookupStatus.withLock { $0[account] = errSecSuccess }
         return true
     }
 
     /// Atomic creation: preserve duplicate versus uncertain failure so the QA
     /// runner never cleans a collision that this run did not create.
     static func createIfAbsent(_ key: String, account: String, allowInteraction: Bool = true) -> OSStatus {
+        guard acquireKeychainLock() else { return errSecNotAvailable }
+        defer { keychainLock.unlock() }
         guard !key.isEmpty, let data = key.data(using: .utf8) else { return errSecParam }
         if isSessionOnly {
             return cache.withLock {
@@ -1731,19 +1782,72 @@ enum APIKeyStore {
             kSecAttrAccount as String: account,
             kSecValueData as String: data,
         ], allowInteraction: allowInteraction)
-        let status = SecItemAdd(item as CFDictionary, nil)
-        if status == errSecSuccess { cache.withLock { _ = $0.updateValue(key, forKey: account) } }
+        let status = keychainOperation(allowInteraction: allowInteraction) { SecItemAdd(item as CFDictionary, nil) }
+        if status == errSecSuccess {
+            cache.withLock { _ = $0.updateValue(key, forKey: account) }
+            lookupStatus.withLock { $0[account] = errSecSuccess }
+        }
         return status
     }
 
     /// `load` off the main thread. A Keychain read can wait on a macOS
     /// "allow access?" prompt, and on the main actor that freezes the window.
-    static func loadInBackground(account: String = "claude-api-key", allowInteraction: Bool = true) async -> String? {
-        await Task.detached { load(account: account, allowInteraction: allowInteraction) }.value
+    static func loadInBackground(account: String = "claude-api-key", allowInteraction: Bool = false) async -> String? {
+        if case .available(let key) = await settingsKey(account: account, requestAuthorization: allowInteraction) { return key }
+        return nil
     }
 
     enum SettingsKeyResult: Equatable, Sendable {
         case available(String), notFound, needsAuthorization, unavailable
+    }
+
+    private final class SettingsCompletion: @unchecked Sendable {
+        private struct State {
+            var continuation: CheckedContinuation<SettingsKeyResult, Never>?
+            var interactive = false
+        }
+        private let state: OSAllocatedUnfairLock<State>
+        init(_ value: CheckedContinuation<SettingsKeyResult, Never>) { state = .init(initialState: State(continuation: value)) }
+        var isPending: Bool { state.withLock { $0.continuation != nil } }
+        func beginInteractive() -> Bool {
+            state.withLock { value in
+                guard value.continuation != nil else { return false }
+                value.interactive = true
+                return true
+            }
+        }
+        func expire() {
+            let value = state.withLock { stored -> CheckedContinuation<SettingsKeyResult, Never>? in
+                // An explicitly started private authorization belongs to the
+                // owner; never report timeout while its Mac box remains open.
+                guard !stored.interactive else { return nil }
+                let result = stored.continuation
+                stored.continuation = nil
+                return result
+            }
+            value?.resume(returning: .unavailable)
+        }
+        func finish(_ result: SettingsKeyResult) {
+            let value = state.withLock { stored in
+                let result = stored.continuation
+                stored.continuation = nil
+                return result
+            }
+            value?.resume(returning: result)
+        }
+    }
+
+    private static func cachedSettingsResult(account: String) -> SettingsKeyResult? {
+        if let cached = cache.withLock({ $0[account] }) {
+            if let key = cached, !key.isEmpty { return .available(key) }
+            if isSessionOnly { return .notFound }
+            switch lookupStatus.withLock({ $0[account] }) {
+            case errSecItemNotFound?: return .notFound
+            case errSecSuccess?, errSecInteractionNotAllowed?, errSecInteractionRequired?, errSecAuthFailed?, errSecUserCanceled?: return .needsAuthorization
+            default: return .unavailable
+            }
+        }
+        return nil
     }
 
     /// Settings never blocks its main actor or starts an authorization prompt
@@ -1751,42 +1855,63 @@ enum APIKeyStore {
     /// previously unavailable read with the ordinary Mac authorization policy.
     /// This does not replace/delete a credential or change its access controls.
     static func settingsKey(account: String = "claude-api-key",
-                            requestAuthorization: Bool = false) async -> SettingsKeyResult {
-        await Task.detached { () -> SettingsKeyResult in
-            if requestAuthorization {
+                            requestAuthorization: Bool = false,
+                            timeoutSeconds: TimeInterval = 3) async -> SettingsKeyResult {
+        if !requestAuthorization, let cached = cachedSettingsResult(account: account) { return cached }
+        guard timeoutSeconds > 0, timeoutSeconds <= 10 else { return .unavailable }
+        // One uncancellable Security operation per account. A timed-out waiter
+        // cannot create more workers or re-enable UI around the original read.
+        guard pendingSettings.withLock({ $0.insert(account).inserted }) else { return .unavailable }
+        return await withCheckedContinuation { continuation in
+            let completion = SettingsCompletion(continuation)
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeoutSeconds) { completion.expire() }
+            DispatchQueue.global(qos: .utility).async {
+                if requestAuthorization {
+                    // Never queue authorization behind an unrelated stalled
+                    // lookup and display its Mac prompt after the user left.
+                    guard keychainLock.try() else {
+                        pendingSettings.withLock { _ = $0.remove(account) }
+                        completion.finish(.unavailable)
+                        return
+                    }
+                } else { keychainLock.lock() }
+                defer { keychainLock.unlock() }
+                guard requestAuthorization ? completion.beginInteractive() : completion.isPending else {
+                    pendingSettings.withLock { _ = $0.remove(account) }
+                    return
+                }
+                if requestAuthorization {
                 cache.withLock { values in
                     if let cached = values[account], cached == nil {
                         values.removeValue(forKey: account)
                     }
                 }
+                }
+                _ = load(account: account, allowInteraction: requestAuthorization)
+                let result = cachedSettingsResult(account: account) ?? (isSessionOnly ? .notFound : .unavailable)
+                pendingSettings.withLock { _ = $0.remove(account) }
+                completion.finish(result)
             }
-            let loaded = load(account: account, allowInteraction: requestAuthorization)
-            // A concurrent explicit Save is newer than an in-flight read.
-            let current = cache.withLock { values -> String? in
-                // A present nil is a newer delete/failure tombstone, not an
-                // absent entry. Never revive the older in-flight read.
-                if let cached = values[account] { return cached }
-                return loaded
-            }
-            if let key = current, !key.isEmpty { return .available(key) }
-            if isSessionOnly { return .notFound }
-            switch metadataStatus(account: account, allowInteraction: false) {
-            case errSecItemNotFound: return .notFound
-            case errSecSuccess, errSecInteractionNotAllowed, errSecAuthFailed, errSecUserCanceled:
-                return .needsAuthorization
-            default: return .unavailable
-            }
-        }.value
+        }
     }
 
-    static func load(account: String = "claude-api-key", allowInteraction: Bool = true) -> String? {
+    static func load(account: String = "claude-api-key", allowInteraction: Bool = false) -> String? {
+        let args = ProcessInfo.processInfo.arguments
+        if args.contains("--profile-test") || args.contains("--help-shots") { return nil }
+        if let hit = cache.withLock({ $0[account] }) { return hit }
+        // View refresh/isConfigured must never wait for Security or its lock.
+        // The bounded, single-flight background path warms the same cache.
+        if isUIThread, !allowInteraction {
+            Task.detached { _ = await settingsKey(account: account) }
+            return nil
+        }
+        keychainLock.lock()
+        defer { keychainLock.unlock() }
         // The logic harness must stay hermetic: reading the app's keychain
         // item from an ad-hoc dev binary makes securityd pop a consent dialog
         // and block forever when nobody clicks it (bit us: --profile-test
         // hung inside testCopilotBudget via setPaused → isConfigured).
         // --help-shots too: screenshots never read a key or call a service.
-        let args = ProcessInfo.processInfo.arguments
-        if args.contains("--profile-test") || args.contains("--help-shots") { return nil }
         if let hit = cache.withLock({ $0[account] }) { return hit }
         // Diagnostic bundles opt into memory-only credentials: even looking
         // for a missing key in a locked legacy keychain can display a prompt.
@@ -1800,19 +1925,23 @@ enum APIKeyStore {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ], allowInteraction: allowInteraction)
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        let status = keychainOperation(allowInteraction: allowInteraction) { SecItemCopyMatching(query as CFDictionary, &result) }
         // A declined/locked read must not make every UI refresh ask again.
         // A successful explicit Save refreshes this entry; relaunch retries it.
         let key = status == errSecSuccess
             ? (result as? Data).flatMap { String(data: $0, encoding: .utf8) }
             : nil
         // A save/delete that landed during the read is newer: keep it.
-        cache.withLock { if $0.index(forKey: account) == nil { $0.updateValue(key, forKey: account) } }
-        return key
+        return cache.withLock { values in
+            if let current = values[account] { return current }
+            values.updateValue(key, forKey: account)
+            lookupStatus.withLock { $0[account] = status }
+            return key
+        }
     }
 
     /// Uncached metadata only: permission errors are never converted to absence.
-    static func metadataStatus(account: String, allowInteraction: Bool = true) -> OSStatus {
+    static func metadataStatus(account: String, allowInteraction: Bool = false) -> OSStatus {
         let args = ProcessInfo.processInfo.arguments
         guard !args.contains("--profile-test"), !args.contains("--help-shots"),
               !isSessionOnly, let service else { return errSecNotAvailable }
@@ -1824,11 +1953,13 @@ enum APIKeyStore {
             kSecMatchLimit as String: kSecMatchLimitOne,
         ], allowInteraction: allowInteraction)
         var attributes: CFTypeRef?
-        return SecItemCopyMatching(query as CFDictionary, &attributes)
+        return keychainOperation(allowInteraction: allowInteraction) { SecItemCopyMatching(query as CFDictionary, &attributes) }
     }
 
     @discardableResult
     static func delete(account: String = "claude-api-key", allowInteraction: Bool = true) -> Bool {
+        guard acquireKeychainLock() else { return false }
+        defer { keychainLock.unlock() }
         if isSessionOnly {
             cache.withLock { _ = $0.updateValue(nil, forKey: account) }
             return true
@@ -1839,9 +1970,10 @@ enum APIKeyStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
         ], allowInteraction: allowInteraction)
-        let status = SecItemDelete(query as CFDictionary)
+        let status = keychainOperation(allowInteraction: allowInteraction) { SecItemDelete(query as CFDictionary) }
         guard status == errSecSuccess || status == errSecItemNotFound else { return false }
         cache.withLock { _ = $0.updateValue(nil, forKey: account) }
+        lookupStatus.withLock { $0[account] = errSecItemNotFound }
         return true
     }
 }
