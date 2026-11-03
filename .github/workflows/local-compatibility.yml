@@ -18,6 +18,10 @@ on:
         description: ARM setup BUILD_ONLY stage; both full profiles and native acceptance stay pending
         type: boolean
         default: false
+      source_checks_only:
+        description: Source and signer component checks only; no app build, full profile or native acceptance
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -32,10 +36,14 @@ jobs:
           PARROT_REQUESTED_RUNNER: ${{ inputs.runner }}
           PARROT_CROSS_ROUTE: ${{ inputs.cross_compile_arm64 }}
           PARROT_SETUP_ROUTE: ${{ inputs.arm_setup_only }}
+          PARROT_SOURCE_ROUTE: ${{ inputs.source_checks_only }}
         run: |
-          if [[ "$PARROT_CROSS_ROUTE" == true || "$PARROT_SETUP_ROUTE" == true ]]; then
+          if [[ "$PARROT_CROSS_ROUTE" == true || "$PARROT_SETUP_ROUTE" == true || "$PARROT_SOURCE_ROUTE" == true ]]; then
             test "$PARROT_REQUESTED_RUNNER" = macos-26-intel
             test "$PARROT_CROSS_ROUTE/$PARROT_SETUP_ROUTE" != true/true
+            if [[ "$PARROT_SOURCE_ROUTE" == true ]]; then
+              test "$PARROT_CROSS_ROUTE/$PARROT_SETUP_ROUTE" = false/false
+            fi
           fi
       # The ARM macOS15 image defaults to an older SDK. Select the documented
       # Xcode26 toolchain explicitly; never silently fall back or skip tests.
@@ -48,7 +56,7 @@ jobs:
           xcodebuild -version
           test "$(xcrun --sdk macosx --show-sdk-version)" = 26.2
       - name: Select Intel cross-build toolchain
-        if: inputs.cross_compile_arm64 || inputs.arm_setup_only
+        if: inputs.cross_compile_arm64 || inputs.arm_setup_only || inputs.source_checks_only
         env:
           PARROT_REQUESTED_RUNNER: ${{ inputs.runner }}
         run: |
@@ -66,7 +74,7 @@ jobs:
           python3 -B scripts/test-document-review-context.py | tee source-grounded-evidence/document-review-context.log
           python3 -B scripts/test-reviewed-facts.py | tee source-grounded-evidence/reviewed-facts.log
           python3 -B scripts/test-catalog-signer.py | tee source-grounded-evidence/catalog-signer.log
-          if [[ '${{ inputs.cross_compile_arm64 }}' == true || '${{ inputs.arm_setup_only }}' == true ]]; then
+          if [[ '${{ inputs.cross_compile_arm64 }}' == true || '${{ inputs.arm_setup_only }}' == true || '${{ inputs.source_checks_only }}' == true ]]; then
             swiftc -parse-as-library -target arm64-apple-macosx14.0 -sdk "$(xcrun --sdk macosx --show-sdk-path)" scripts/catalog-sign.swift -o source-grounded-evidence/catalog-signer-arm64
             shasum -a 256 source-grounded-evidence/catalog-signer-arm64 > source-grounded-evidence/catalog-signer-arm64.sha256
           fi
@@ -74,14 +82,14 @@ jobs:
           python3 -B scripts/test-redacted-evidence-roundtrip.py | tee source-grounded-evidence/redacted-evidence-after.log
       - uses: actions/cache@v4
         # Do not share Mac26 compiled objects with the different host/toolchain.
-        if: inputs.runner != 'macos-15' && !inputs.cross_compile_arm64 && !inputs.arm_setup_only
+        if: inputs.runner != 'macos-15' && !inputs.cross_compile_arm64 && !inputs.arm_setup_only && !inputs.source_checks_only
         with:
           path: .build
           key: local-compat-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
       # Same prerequisite as upstream CI: a fresh runner lacks the optional
       # NaturalLanguage embedding assets used by the offline logic harness.
       - name: Prepare offline embedding assets
-        if: ${{ !inputs.arm_setup_only }}
+        if: ${{ !inputs.arm_setup_only && !inputs.source_checks_only }}
         timeout-minutes: 6
         continue-on-error: true
         run: |
@@ -101,6 +109,7 @@ jobs:
           SWIFT
           swift /tmp/parrot-embedding-assets.swift
       - name: Build and verify candidate
+        if: ${{ !inputs.source_checks_only }}
         env:
           PARROT_CROSS_COMPILE_ARM64: ${{ inputs.cross_compile_arm64 }}
           PARROT_ARM_SETUP_ONLY: ${{ inputs.arm_setup_only }}
@@ -119,7 +128,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ${{ inputs.arm_setup_only && 'arm-setup-build-only-candidate' || inputs.cross_compile_arm64 && 'arm-cross-build-only-candidate' || 'local-macos-candidate' }}
+          name: ${{ inputs.source_checks_only && 'source-and-signer-checks-only' || inputs.arm_setup_only && 'arm-setup-build-only-candidate' || inputs.cross_compile_arm64 && 'arm-cross-build-only-candidate' || 'local-macos-candidate' }}
           path: |
             Parrot-local-candidate.zip
             Parrot-arm64-build-only.zip
