@@ -28,7 +28,9 @@ jobs:
   candidate:
     # Never accept an arbitrary self-hosted runner label from a dispatch input.
     runs-on: ${{ inputs.runner == 'macos-15' && 'macos-15' || inputs.runner == 'macos-26-intel' && 'macos-26-intel' || 'macos-26' }}
-    timeout-minutes: 45
+    # A full Intel build/profile plus the full ARM cross-build exceeded45min
+    # after the host suite passed. Keep all tests and their own bounds intact.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Validate requested route
