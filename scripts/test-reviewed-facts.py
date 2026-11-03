@@ -188,7 +188,7 @@ do {
     check("generic followup may nominate an exact retrieved fact quote", followup.reviewedFactContext?.isEmpty == false)
     check("unresolved followup without retrieved evidence stays empty", request(snap, question: "How do I do that?").preparingReviewedFacts().reviewedFactContext?.isEmpty == true)
     let irrelevant = request(snap, question: "What is the weather tomorrow?",
-        refs: [KBReference(documentName: s.name, text: "Unrelated weather passage.")]).preparingReviewedFacts()
+        refs: [KBReference(documentName: s.name, note: nil, text: "Unrelated weather passage.")]).preparingReviewedFacts()
     check("document name alone cannot admit irrelevant fact", irrelevant.reviewedFactContext?.isEmpty == true)
     let wrongVersion = request(snap, question: "How does Atlas 4.2.1 footer placement work?").preparingReviewedFacts()
     check("explicit other version excluded", wrongVersion.reviewedFactContext?.isEmpty == true)
@@ -237,7 +237,7 @@ do {
     check("stale context never yields cited answer", fallback(A.parseStrictAnswer(from: try response(["reply": reply, "evidence_ids": ["p0"]]), request: stale).insights[0]))
     var keyStale = req; keyStale.reviewedQuestionKey = "Another original question"
     check("changed original question invalidates context", keyStale.preparingReviewedFacts().reviewedFactContext?.isEmpty == true)
-    var refsStale = req; refsStale.references = [KBReference(documentName: s.name, text: "Edited bytes")]
+    var refsStale = req; refsStale.references = [KBReference(documentName: s.name, note: nil, text: "Edited bytes")]
     check("changed source reference invalidates context", A.evidenceItems(refsStale).isEmpty)
     var scopeStale = req; scopeStale.reviewedCatalog = catalog.admitted(documents: [offDoc], folders: [], profileID: nil)
     check("changed admission revision invalidates context", scopeStale.preparingReviewedFacts().reviewedFactContext?.isEmpty == true)
