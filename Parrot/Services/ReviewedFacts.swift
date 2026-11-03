@@ -195,6 +195,14 @@ extension ReviewedAnswerCatalog.Snapshot {
         let regex = try? NSRegularExpression(pattern: #"\b[0-9]+\.[0-9]+(?:\.[0-9]+)?\b"#)
         let versions = Set((regex?.matches(in: question, range: NSRange(question.startIndex..., in: question)) ?? [])
             .compactMap { Range($0.range, in: question).map { String(question[$0]) } })
+        // The importer glues Markdown headings onto paragraphs, changing only
+        // whitespace. Normalize nomination inputs, never signed source bytes
+        // or the exact quote returned in citations. Case and punctuation stay.
+        func nominationText(_ text: String) -> String {
+            text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        }
+        let retrievedBySource = Dictionary(grouping: retrievedReferences, by: \.documentName)
+            .mapValues { $0.map { nominationText($0.text) } }
         var ranked: [(ReviewedAnswerCatalog.Fact, ReviewedAnswerCatalog.Source, Double)] = []
         for fact in facts {
             guard let source = byID[fact.evidence.sourceID],
@@ -202,10 +210,11 @@ extension ReviewedAnswerCatalog.Snapshot {
             let overlap = Double(asked.intersection(words(
                 ([fact.claim, fact.scopeKey, fact.applicability] + fact.conditions + fact.excludedScopes)
                     .joined(separator: " "))).count)
-            let retrieved = retrievedReferences.filter { $0.documentName == source.name }
+            let retrieved = retrievedBySource[source.name] ?? []
             let sourceMatch = !retrieved.isEmpty
-            let quoteMatch = retrieved.contains {
-                !$0.text.isEmpty && ($0.text.contains(fact.evidence.quote) || fact.evidence.quote.contains($0.text))
+            let quote = nominationText(fact.evidence.quote)
+            let quoteMatch = !quote.isEmpty && retrieved.contains {
+                !$0.isEmpty && ($0.contains(quote) || quote.contains($0))
             }
             guard overlap > 0 || quoteMatch else { continue }
             let score = overlap + (sourceMatch ? 0.5 : 0) + (quoteMatch ? 2 : 0)

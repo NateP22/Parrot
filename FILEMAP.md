@@ -216,7 +216,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/test-selector-credential-policy.py` | Actual selector key-read block and background forwarding with link-fenced Security shims; refuses UI suppression failures, locked/missing own keys, preserves ordinary defaults; no real credentials |
 | `scripts/test-reviewed-form-context.py` | Bounded actual-source run of existing fictional condition/state/quote routing regressions; no app, credentials, models, provider score or native acceptance |
 | `scripts/test-document-review-context.py` | Actual strict request/review functions with inert transport; follow-up context parity, data bounds, cancellation and failure controls; no model/native acceptance |
-| `scripts/test-reviewed-facts.py` | Actual fact admission/request/parser/privacy/store source with temporary synthetic trust root and inert verdicts; no production signatures or model/native acceptance |
+| `scripts/test-reviewed-facts.py` | Actual fact admission/chunker/request/parser/privacy/store source; heading-whitespace nomination and unchanged citation controls, synthetic trust root/inert verdicts; no model/native acceptance |
 | `scripts/test-catalog-signer.py` | Actual signer CLI/CryptoKit with synthetic key; format, completed-fact-review and approved-byte guards; no production key/app/native proof |
 | `scripts/probe-mcp-bundle.py` | Bounded named-icon/bitmap/nil headless export diagnosis using actual build/png/subprocess functions, phase markers and timeout stack samples; no full-profile/app acceptance |
 | `scripts/run-profile-test.py` | Full profile CLI with deadline, own-child stack sample and failure on timeout/nonzero/partial output; no skipped assertions or native acceptance |
