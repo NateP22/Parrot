@@ -18,6 +18,7 @@ import zipfile
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--output-dir', type=Path, default=Path('source-grounded-evidence/mcp-bundle-probe'))
 parser.add_argument('--timeout', type=int, default=12)
+parser.add_argument('--include-named-icon', action='store_true', help='Opt-in repeat of the archived OS-icon stall diagnosis')
 args = parser.parse_args()
 if not 2 <= args.timeout <= 30:
     parser.error('timeout must be2..30 seconds')
@@ -35,6 +36,9 @@ def block(text, name, indent='    '):
 
 
 build = block(source, '    static func build(')
+assert build.count('fm.temporaryDirectory') == 2
+build = build.replace('fm.temporaryDirectory',
+    'URL(fileURLWithPath: ProcessInfo.processInfo.environment["PARROT_PROBE_ROOT"]!)')
 for before, after in [
     ('        if let png = icon.flatMap(pngData) { try png.write(to: root.appendingPathComponent("icon.png")) }',
      '        print("PNG_START")\n        if let png = icon.flatMap(pngData) { try png.write(to: root.appendingPathComponent("icon.png")) }\n        print("PNG_END")'),
@@ -87,10 +91,10 @@ with tempfile.TemporaryDirectory(prefix='parrot-mcp-bundle-probe-') as directory
     binary = temp/'probe'
     subprocess.run(['swiftc','-swift-version','5','-module-cache-path',str(temp/'module-cache'),
         str(temp/'Subject.swift'),str(temp/'main.swift'),'-o',str(binary)],check=True,timeout=120)
-    for mode in ['named','bitmap','nil']:
+    for mode in (['named'] if args.include_named_icon else [])+['bitmap','nil']:
         phase = temp/mode
         phase.mkdir(mode=0o700)
-        env = os.environ.copy(); env['TMPDIR']=str(phase)+'/'
+        env = os.environ.copy(); env['PARROT_PROBE_ROOT']=str(phase)
         started = time.monotonic()
         child = subprocess.Popen([str(binary),mode],stdout=subprocess.PIPE,stderr=subprocess.STDOUT,
             env=env,start_new_session=True)
@@ -132,4 +136,4 @@ record=dict(scope='Focused extracted production build/png and actual test subpro
     production_source_sha256=hashlib.sha256(source.encode()).hexdigest(),results=results)
 (out/'RESULT.json').write_text(json.dumps(record,indent=2)+'\n')
 assert all(r['status']=='completed' and r['returncode']==0 for r in results if r['mode']!='named'), 'Deterministic bitmap/nil export did not complete'
-print('MCP BUNDLE PROBE: deterministic bitmap and nil controls completed; named-icon outcome is diagnostic only; full profile remains separate')
+print('MCP BUNDLE PROBE: deterministic bitmap and nil controls completed; named icon '+('diagnosed' if args.include_named_icon else 'not run')+'; full profile remains separate')

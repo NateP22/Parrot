@@ -13,7 +13,7 @@ python3 scripts/test-qa-bundle-policy.py 2>&1 | tee build-evidence/qa-bundle-pol
 python3 scripts/test-native-answer-qualification.py 2>&1 | tee build-evidence/native-answer-qualification.log
 bash scripts/test-microphone-input.sh | tee build-evidence/microphone-format.log
 make build CONFIG=release SWIFT_BUILD_FLAGS="--force-resolved-versions --disable-keychain --disable-netrc"
-.build/release/Parrot --profile-test > build-evidence/profile-test.log 2>&1
+python3 -B scripts/run-profile-test.py .build/release/Parrot build-evidence/profile-test.log
 tail -1 build-evidence/profile-test.log
 make bundle CONFIG=release SIGN_IDENTITY=- VERSION=0.29.7-local-test \
   SWIFT_BUILD_FLAGS="--force-resolved-versions --disable-keychain --disable-netrc"

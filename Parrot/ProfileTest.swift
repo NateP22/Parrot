@@ -5233,7 +5233,19 @@ enum ProfileTest {
         }
         check("mcpb: launcher starts Parrot from a path with spaces and quotes", run("/bin/sh", [script.path]) == "started --mcp\n")
 
-        let built = try? MCPBundle.build(appPath: app.path, version: "1.2.3", icon: NSImage(named: NSImage.applicationIconName))
+        // The OS generic-icon lookup blocks in IconServices on a headless
+        // runner. Use a known bitmap, matching the exporter's bundled-image
+        // path, while still exercising its real PNG rendering and archiving.
+        let icon = NSImage(size: NSSize(width: 1, height: 1))
+        if let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 1, pixelsHigh: 1,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 4, bitsPerPixel: 32) {
+            bitmap.bitmapData?[0] = 220; bitmap.bitmapData?[1] = 20
+            bitmap.bitmapData?[2] = 60; bitmap.bitmapData?[3] = 255
+            icon.addRepresentation(bitmap)
+        }
+        check("mcpb: deterministic bitmap fixture exists", !icon.representations.isEmpty)
+        let built = try? MCPBundle.build(appPath: app.path, version: "1.2.3", icon: icon)
         let listing = built.map { run("/usr/bin/unzip", ["-l", $0.path]) } ?? ""
         check("mcpb: file has the manifest at its root", listing.contains(" manifest.json\n"))
         check("mcpb: file has the launcher and the icon", listing.contains(" server/launch.sh\n") && listing.contains(" icon.png\n"))

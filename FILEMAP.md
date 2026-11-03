@@ -217,6 +217,8 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/test-reviewed-facts.py` | Actual fact admission/request/parser/privacy/store source with temporary synthetic trust root and inert verdicts; no production signatures or model/native acceptance |
 | `scripts/test-catalog-signer.py` | Actual signer CLI/CryptoKit with synthetic key; format, completed-fact-review and approved-byte guards; no production key/app/native proof |
 | `scripts/probe-mcp-bundle.py` | Bounded named-icon/bitmap/nil headless export diagnosis using actual build/png/subprocess functions, phase markers and timeout stack samples; no full-profile/app acceptance |
+| `scripts/run-profile-test.py` | Full profile CLI with deadline, own-child stack sample and failure on timeout/nonzero/partial output; no skipped assertions or native acceptance |
+| `scripts/test-profile-runner.py` | Real synthetic child success/failure/partial/timeout controls, including false success after cancellation; no app/key/model |
 | `scripts/test-redacted-evidence-roundtrip.py` | Actual Redactor/selected evidence round-trip and fail-closed collisions; fictional data, optional compiled historical RED baseline; no keys/models/native acceptance |
 | `scripts/test-qa-credential-admission.py` | Compiled actual launch/parser admission and existing strict QA setup regressions; no Keychain or models |
 | `scripts/test-qa-window-reopen.py` | Compiled actual delegate reopen decisions with inert UI boundaries; nil-opener fallback, activation and duplicate-window regressions; not native window proof |
