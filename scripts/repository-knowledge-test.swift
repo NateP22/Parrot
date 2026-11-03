@@ -29,10 +29,19 @@ enum RepositoryKnowledgeComponentTest {
         check("JSON code and duplicate basenames are distinct", source.files.count == 3)
         let passages = source.passages(linesPerChunk: 2, overlap: 1)
         check("short config statements retained", passages.contains { $0.text == "{\"allowLinks\":false}\n" })
+        check("terminal newline does not invent GitHub line 2", passages.first { $0.citation.path == "client/settings.json" }?.citation.endLine == 1)
+        check("CRLF ends on real line 3", passages.filter { $0.citation.path == "host/Line space.jsx" }.map { $0.citation.endLine }.max() == 3)
+        let oneCRLF = try RepositoryKnowledge.decode(packet([file("host/one.js", "x\r\n")])).passages()
+        check("one CRLF line cites L1-L1", oneCRLF.count == 1 && oneCRLF[0].citation.startLine == 1 && oneCRLF[0].citation.endLine == 1 && oneCRLF[0].text == "x\r\n")
+        for text in ["a\nb", "a\n\n"] {
+            let edge = try RepositoryKnowledge.decode(packet([file("host/edge.js", text)])).passages()
+            check("final newline edge preserves exact two real lines", edge.count == 1 && edge[0].citation.endLine == 2 && edge[0].text == text)
+        }
         for passage in passages {
             let original = input.first { $0.path == passage.citation.path }!.text.components(separatedBy: "\n")
             check("exact source line reconstruction \(passage.citation.label)",
-                  original[(passage.citation.startLine - 1)..<passage.citation.endLine].joined(separator: "\n") == passage.text)
+                  original[(passage.citation.startLine - 1)..<passage.citation.endLine].joined(separator: "\n")
+                    + (passage.citation.endLine < original.count ? "\n" : "") == passage.text)
             check("citation revision pinned", passage.citation.revision == source.revision)
         }
         let citation = passages.first { $0.citation.path.contains(" ") }!.citation

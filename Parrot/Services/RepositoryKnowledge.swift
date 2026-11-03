@@ -107,10 +107,15 @@ struct RepositoryKnowledge: Codable {
         let width = max(2, linesPerChunk), step = max(1, width - max(0, min(width - 1, overlap)))
         let token = revision
         return files.flatMap { file -> [Passage] in
-            let lines = file.text.components(separatedBy: "\n")
+            var lines = file.text.components(separatedBy: "\n")
+            let finalNewline = file.text.utf8.last == 0x0A
+            // A terminal newline terminates the last GitHub line; it does not
+            // create another numbered line for a citation.
+            if finalNewline { lines.removeLast() }
             return stride(from: 0, to: lines.count, by: step).compactMap { first in
                 let last = min(lines.count, first + width)
                 let text = lines[first..<last].joined(separator: "\n")
+                    + (last < lines.count || finalNewline ? "\n" : "")
                 guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
                 return Passage(text: text, citation: RepositoryCitation(repository: repository,
                     commit: commit, path: file.path, blob: file.blob, sha256: file.sha256,
