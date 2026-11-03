@@ -26,6 +26,7 @@ final class KnowledgeBaseService {
     var isEmpty: Bool { documents.isEmpty }
 
     private let persistent: Bool
+    private let embeddingsEnabled: Bool
     /// Explicit isolated storage for harnesses; default app storage is unchanged.
     private let storageURL: URL?
     /// The loaded index predates folders: the first save keeps a copy.
@@ -33,6 +34,7 @@ final class KnowledgeBaseService {
 
     init(persistent: Bool = true, storageURL: URL? = nil) {
         self.persistent = persistent
+        self.embeddingsEnabled = true
         self.storageURL = storageURL
         if persistent {
             load()
@@ -41,9 +43,64 @@ final class KnowledgeBaseService {
         }
     }
 
+    /// Isolated component measurement only. Uses the real chunker, source
+    /// admission and search, with no model/asset load or normal-store write.
+    /// Lexical fallback results are not normal hybrid/native retrieval proof.
+    static func reviewedFactsDiagnostic(catalogData: Data,
+                                         expected: ReviewedAnswerCatalog.Snapshot) throws -> KnowledgeBaseService {
+        try KnowledgeBaseService(diagnosticCatalog: catalogData, expected: expected)
+    }
+
+    private init(diagnosticCatalog: Data, expected: ReviewedAnswerCatalog.Snapshot) throws {
+        persistent = false
+        embeddingsEnabled = false
+        storageURL = nil
+        let catalog = try ReviewedAnswerCatalog.decode(diagnosticCatalog)
+        guard catalog.effectiveMode == .reviewedFacts, expected.mode == .reviewedFacts,
+              expected.admissionIssues.isEmpty, !expected.facts.isEmpty else {
+            throw ReviewedSelectorInput.Failure.invalidInput
+        }
+        for source in catalog.sources {
+            guard Self.contentDigest(source.text) == source.sha256 else {
+                throw ReviewedSelectorInput.Failure.invalidInput
+            }
+            let pieces = Self.chunkText(source.text)
+            guard !pieces.isEmpty else { throw ReviewedSelectorInput.Failure.invalidInput }
+            let language = NLLanguageRecognizer.dominantLanguage(for: source.text) ?? .english
+            chunks += pieces.map { KBChunk(documentName: source.name, languageRaw: language.rawValue,
+                                           text: $0, embedding: [], space: nil) }
+            documents.append(KBDocument(name: source.name, chunkCount: pieces.count,
+                addedAt: Date(timeIntervalSince1970: 0), scope: .all, contentSHA256: source.sha256))
+        }
+        try installReviewedCatalog(diagnosticCatalog)
+        guard diagnosticMatches(expected) else { throw ReviewedSelectorInput.Failure.invalidInput }
+    }
+
+    func diagnosticMatches(_ expected: ReviewedAnswerCatalog.Snapshot) -> Bool {
+        guard !persistent, !embeddingsEnabled, folders.isEmpty,
+              expected.mode == .reviewedFacts, expected.admissionIssues.isEmpty,
+              let actual = reviewedAnswerSnapshot(for: nil), actual.admissionIssues.isEmpty,
+              actual.mode == .reviewedFacts, actual.revisionToken == expected.revisionToken,
+              documents.count == expected.sources.count,
+              Set(documents.map(\.name)).count == documents.count else { return false }
+        return expected.sources.allSatisfy { source in
+            let docs = documents.filter { $0.name == source.name }
+            let pieces = chunks.filter { $0.documentName == source.name }
+            return docs.count == 1 && docs[0].contentSHA256 == source.sha256
+                && docs[0].effectiveScope(in: folders) == .all
+                && docs[0].chunkCount == pieces.count
+                && pieces.map(\.text) == Self.chunkText(source.text)
+                && pieces.allSatisfy { $0.embedding.isEmpty && $0.space == nil }
+        } && chunks.allSatisfy { chunk in expected.sources.contains { $0.name == chunk.documentName } }
+    }
+
     // MARK: - Document Management
 
     func addDocuments(at urls: [URL], into folderID: UUID? = nil) async {
+        guard embeddingsEnabled else {
+            lastError = "Diagnostic source inventory is read-only."
+            return
+        }
         isIndexing = true
         lastError = nil
         for url in urls {
@@ -345,6 +402,7 @@ final class KnowledgeBaseService {
             uniquingKeysWith: { first, _ in first }
         )
 
+        let embeddingsEnabled = self.embeddingsEnabled
         let best: [KBChunk] = await Task.detached(priority: .userInitiated) {
             // Documents may be in different scripts, each with its own model;
             // embed the query once per model so vectors are always compared
@@ -352,7 +410,7 @@ final class KnowledgeBaseService {
             // Spanish...) share one model, so an English question can match a
             // Turkish chunk. A chunk with no current vector scores 0.
             var queryVectors: [String: [Double]] = [:]
-            for raw in Set(snapshot.map(\.languageRaw)) {
+            for raw in Set(snapshot.map(\.languageRaw)) where embeddingsEnabled {
                 let language = NLLanguage(rawValue: raw)
                 guard let space = Self.space(for: language), queryVectors[space] == nil,
                       let vector = Self.embed(query, language: language) else { continue }
@@ -570,7 +628,7 @@ final class KnowledgeBaseService {
     /// model revision. Until then search skips those vectors and the chunks
     /// match on exact words, so results stay correct meanwhile.
     func refreshEmbeddings() async {
-        guard QASetupLaunch.permitsMeetingWork else { return }
+        guard embeddingsEnabled, QASetupLaunch.permitsMeetingWork else { return }
         // A call that lands mid-refresh (a document in a new script added
         // during the first-launch re-embed) gets one more pass, not dropped.
         guard !isRefreshing else { refreshAgain = true; return }

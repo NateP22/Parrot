@@ -35,6 +35,7 @@ enum ProfileTest {
         ReviewedSelectorJournalChecks.run { check($0, $1) }
         ReviewedSelectorContextChecks.run { check($0, $1) }
         ReviewedSelectorExecutionChecks.runSync { check($0, $1) }
+        ReviewedFactsEvalChecks.runSync { check($0, $1) }
         testGroundedAnswerGuard()
         testEvidenceReviewTransport()
         testDocumentAnswerDelivery()

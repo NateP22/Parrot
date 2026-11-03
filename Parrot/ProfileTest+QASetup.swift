@@ -55,6 +55,17 @@ enum QASetupChecks {
         check("QA selector evaluator refuses mixed capture", mode(evaluator+["--capture-test"]) == .rejected)
         check("QA selector evaluator refuses reordered command", mode([evaluator[1],evaluator[0],evaluator[2]]) == .rejected)
         check("QA selector evaluator refuses repeated command", mode(evaluator+["--reviewed-selector-eval"]) == .rejected)
+        let facts = ["--qa-setup", "--reviewed-facts-eval", "/private/fixture/manifest.json"]
+        check("QA fact evaluator uses settings-only guard", mode(facts) == .settingsOnly)
+        check("QA fact evaluator remains lightweight with next meeting preference", mode(facts,boot:true,next:false) == .settingsOnly)
+        check("QA fact evaluator refuses original app", mode(facts,"com.uygar.parrot") == .rejected)
+        check("QA fact evaluator refuses numeric trace flag", mode(facts,qa,NSNumber(value:1)) == .rejected)
+        for invalid in [Array(facts.dropFirst()), Array(facts.dropLast()),
+            ["--qa-setup","--reviewed-facts-eval","manifest.json"],
+            ["--qa-setup","--reviewed-facts-eval","https://example.invalid/manifest.json"],
+            facts+["--capture-test"], [facts[1],facts[0],facts[2]], facts+["--reviewed-facts-eval"]] {
+            check("QA fact evaluator refuses malformed/mixed command", mode(invalid) == .rejected)
+        }
         let nonce = "01234567-89AB-4CDE-8FAB-0123456789AB"
         for phase in ["write", "verify-cleanup", "absent"] {
             let probe = ["--qa-setup", "--qa-credential-probe", phase, nonce]

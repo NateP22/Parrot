@@ -72,6 +72,8 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Parrot/ProfileTest+QASetup.swift` | 35 | Synthetic exact-QA launch admission, conflicting CLI and typed-flag regressions; no native readiness |
 | `Parrot/ReviewedSelectorObservation.swift` | 100 | Response-only QA classifier and per-invocation capture; rejects invalid/truncated/duplicate fields and stale/duplicate callbacks; never authorizes a reply |
 | `Parrot/ReviewedSelectorInput.swift` | 215 | Bounded frozen signed/source/case preparation in QA-owned namespace; complete in-memory admission and oracle-free projection; no key/store/provider access |
+| `Parrot/ReviewedFactsEval.swift` | candidate | Separately typed generated-fact answer component measurement; actual lexical-fallback KB search, all-input unscored rows, app-owned citations, no-UI own-QA key guard; never native/semantic acceptance |
+| `Parrot/ProfileTest+ReviewedFactsEval.swift` | candidate | Fixed-root signed fictional fixture, schema separation, exact ephemeral index, actual generation/review mock transport and private journal leakage/denominator controls |
 | `Parrot/ProfileTest+ReviewedSelectorInput.swift` | 145 | Actual signed fictional fixture, inventory/size/path/hash/symlink regressions; component-only |
 | `Parrot/ReviewedSelectorJournal.swift` | 115 | Exclusive0600 bounded private results; sticky failures and synchronized hash/count completion receipt; footer alone never certifies success |
 | `Parrot/ProfileTest+ReviewedSelectorJournal.swift` | 95 | File creation, partial-run, injected final-sync and exact completion-receipt regressions; no real disk fault/native proof |

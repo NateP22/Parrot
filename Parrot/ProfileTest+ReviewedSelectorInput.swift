@@ -134,6 +134,10 @@ enum ReviewedSelectorInputChecks {
             reject("blank question") { g,m in try replaceCases([["id":"blank","question":"  ","previous":""]],g,&m) }
             reject("overlong question") { g,m in try replaceCases([["id":"long","question":String(repeating:"q",count:4_001),"previous":""]],g,&m) }
             reject("unknown execution mode") { _,m in m["modes"]=["other"] }
+            reject("fact schema through old selector entry point") { _,m in
+                m["schema"]=2; m["knowledgeMode"]="reviewedFacts"
+            }
+            reject("fact mode disguised as selector schema") { _,m in m["knowledgeMode"]="reviewedFacts" }
             reject("duplicate execution mode") { _,m in m["modes"]=["isolated","isolated"] }
             reject("existing output",code:.outputExists) { g,_ in try Data("existing".utf8).write(to:g.appendingPathComponent("observations.jsonl")) }
             reject("output input collision") { _,m in m["resultPath"]="source.md" }

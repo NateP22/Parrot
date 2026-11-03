@@ -22,6 +22,10 @@ struct ParrotMain {
             ReviewedSelectorEval.run(manifestPath:args[3])
             return
         }
+        if args.count==4,args[1]=="--qa-setup",args[2]=="--reviewed-facts-eval" {
+            ReviewedFactsEval.run(manifestPath:args[3])
+            return
+        }
         if args.contains("--query-startup-test") {
             MainActor.assumeIsolated { StartupQueryHarness.run() }
             return

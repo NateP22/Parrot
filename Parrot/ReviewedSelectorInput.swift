@@ -9,6 +9,7 @@ enum ReviewedSelectorInput {
     struct Unit: Decodable { let id: String; let digest: String }
     struct Manifest: Decodable {
         let schema: Int
+        let knowledgeMode: ReviewedAnswerCatalog.KnowledgeMode?
         let buildCommit: String
         let catalog: Artifact
         let cases: Artifact
@@ -30,6 +31,7 @@ enum ReviewedSelectorInput {
     }
     struct Prepared {
         let snapshot: ReviewedAnswerCatalog.Snapshot
+        let catalogData: Data
         let cases: [ExecutionCase]
         let modes: [String]
         let manifestSHA256: String
@@ -42,6 +44,17 @@ enum ReviewedSelectorInput {
     }
 
     static func prepare(manifestURL: URL, allowedRoot: URL) throws -> Prepared {
+        try prepare(manifestURL: manifestURL, allowedRoot: allowedRoot, mode: .wholeReply)
+    }
+
+    /// Separate schema and entry point: old selector callers still accept only
+    /// schema1 whole replies. Input path/hash/inventory rules are shared intact.
+    static func prepareFacts(manifestURL: URL, allowedRoot: URL) throws -> Prepared {
+        try prepare(manifestURL: manifestURL, allowedRoot: allowedRoot, mode: .reviewedFacts)
+    }
+
+    private static func prepare(manifestURL: URL, allowedRoot: URL,
+                                mode: ReviewedAnswerCatalog.KnowledgeMode) throws -> Prepared {
         let root = allowedRoot.standardizedFileURL
         guard root.isFileURL, manifestURL.isFileURL,
               manifestURL.path == manifestURL.standardizedFileURL.path else { throw Failure.unsafePath }
@@ -59,7 +72,10 @@ enum ReviewedSelectorInput {
         try canonical(manifest)
         let manifestData = try readRegular(manifest, cap:262_144)
         let m = try JSONDecoder().decode(Manifest.self,from:manifestData)
-        guard m.schema == 1, m.buildCommit.range(of:"^[0-9a-f]{40}$",options:.regularExpression) != nil,
+        let correctSchema = mode == .wholeReply
+            ? m.schema == 1 && (m.knowledgeMode == nil || m.knowledgeMode == .wholeReply)
+            : m.schema == 2 && m.knowledgeMode == .reviewedFacts
+        guard correctSchema, m.buildCommit.range(of:"^[0-9a-f]{40}$",options:.regularExpression) != nil,
               (1...16).contains(m.sources.count), (1...256).contains(m.units.count),
               Set(m.sources.map(\.sourceID)).count == m.sources.count,
               Set(m.units.map(\.id)).count == m.units.count,
@@ -90,11 +106,15 @@ enum ReviewedSelectorInput {
               ReviewedAnswerCatalog.sha256(catalogData) == m.catalog.sha256,
               ReviewedAnswerCatalog.sha256(casesData) == m.cases.sha256 else { throw Failure.invalidInput }
         let catalog = try ReviewedAnswerCatalog.decode(catalogData)
-        guard catalog.sources.count == m.sources.count, catalog.answers.count == m.units.count,
+        let units = mode == .wholeReply
+            ? catalog.answers.map { Unit(id: $0.id, digest: $0.contentDigest) }
+            : (catalog.facts ?? []).map { Unit(id: $0.id, digest: $0.contentDigest) }
+        guard catalog.effectiveMode == mode,
+              catalog.sources.count == m.sources.count, units.count == m.units.count,
               Set(catalog.sources.map(\.id)) == Set(m.sources.map(\.sourceID)),
-              Set(catalog.answers.map(\.id)) == Set(m.units.map(\.id)) else { throw Failure.invalidInput }
+              Set(units.map(\.id)) == Set(m.units.map(\.id)) else { throw Failure.invalidInput }
         let sourceMap = Dictionary(uniqueKeysWithValues:catalog.sources.map {($0.id,$0)})
-        let unitMap = Dictionary(uniqueKeysWithValues:catalog.answers.map {($0.id,$0.contentDigest)})
+        let unitMap = Dictionary(uniqueKeysWithValues:units.map {($0.id,$0.digest)})
         guard m.units.allSatisfy({isSHA($0.digest) && unitMap[$0.id] == $0.digest}) else { throw Failure.invalidInput }
         var receipts = [
             FileReceipt(path:String(manifest.path.dropFirst(group.path.count+1)),bytes:manifestData.count,sha256:ReviewedAnswerCatalog.sha256(manifestData)),
@@ -122,11 +142,14 @@ enum ReviewedSelectorInput {
               }) else { throw Failure.invalidInput }
         try inventory(group:group,inputs:inputs,result:result)
         let snapshot = catalog.admitted(documents:documents,folders:[],profileID:nil)
-        guard snapshot.admissionIssues.isEmpty,
+        let admittedUnits = mode == .wholeReply
+            ? snapshot.answers.map { Unit(id: $0.id, digest: $0.contentDigest) }
+            : snapshot.facts.map { Unit(id: $0.id, digest: $0.contentDigest) }
+        guard snapshot.mode == mode, snapshot.admissionIssues.isEmpty,
               Set(snapshot.sources.map(\.id)) == Set(catalog.sources.map(\.id)),
-              snapshot.answers.count == catalog.answers.count,
-              snapshot.answers.allSatisfy({unitMap[$0.id] == $0.contentDigest}) else { throw Failure.invalidInput }
-        return Prepared(snapshot:snapshot,cases:cases,modes:m.modes,
+              admittedUnits.count == units.count,
+              admittedUnits.allSatisfy({unitMap[$0.id] == $0.digest}) else { throw Failure.invalidInput }
+        return Prepared(snapshot:snapshot,catalogData:catalogData,cases:cases,modes:m.modes,
                         manifestSHA256:ReviewedAnswerCatalog.sha256(manifestData),
                         catalogSHA256:m.catalog.sha256,casesSHA256:m.cases.sha256,
                         expectedBuildCommit:m.buildCommit,groupURL:group,resultURL:result,files:receipts)

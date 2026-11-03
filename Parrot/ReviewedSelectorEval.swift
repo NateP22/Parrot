@@ -48,7 +48,8 @@ enum ReviewedSelectorEval {
     static func execute(prepared:ReviewedSelectorInput.Prepared,
                         makeProvider:(ReviewedSelectorObservationCapture)->AnalysisProvider,
                         record:(Row)throws->Void) async throws {
-        guard (1...128).contains(prepared.cases.count),!prepared.modes.isEmpty,
+        guard prepared.snapshot.mode == .wholeReply,
+              (1...128).contains(prepared.cases.count),!prepared.modes.isEmpty,
               prepared.modes.count<=2,Set(prepared.modes).count==prepared.modes.count,
               Set(prepared.modes).isSubset(of:Set(["isolated","rolling"])) else { throw Failure.rejected }
         let names=prepared.snapshot.sources.map(\.name)
