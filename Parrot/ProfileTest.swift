@@ -3108,6 +3108,9 @@ enum ProfileTest {
         let messages = reviewRequest?["messages"] as? [[String: String]]
         let reviewText = messages?.first?["content"] ?? ""
         let review = (try? JSONSerialization.jsonObject(with: Data(reviewText.utf8))) as? [String: Any]
+        check("transport: generation and evidence review share bounded conversation context",
+              review?["recent_conversation"] as? String == String(request.transcript.suffix(2500)) &&
+              review?["recent_conversation"] as? String == generationContent?["recent_conversation"] as? String)
         check("transport: actual review receives source-labeled original evidence IDs",
               (review?["available_evidence"] as? [[String: String]])?.first ==
                 ["id": "p0", "source": source, "text": evidence])
