@@ -212,6 +212,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/test-selector-credential-policy.py` | Actual selector key-read block and background forwarding with link-fenced Security shims; refuses UI suppression failures, locked/missing own keys, preserves ordinary defaults; no real credentials |
 | `scripts/test-reviewed-form-context.py` | Bounded actual-source run of existing fictional condition/state/quote routing regressions; no app, credentials, models, provider score or native acceptance |
 | `scripts/test-document-review-context.py` | Actual strict request/review functions with inert transport; follow-up context parity, data bounds, cancellation and failure controls; no model/native acceptance |
+| `scripts/test-redacted-evidence-roundtrip.py` | Actual Redactor/selected evidence round-trip and fail-closed collisions; fictional data, optional compiled historical RED baseline; no keys/models/native acceptance |
 | `scripts/test-qa-credential-admission.py` | Compiled actual launch/parser admission and existing strict QA setup regressions; no Keychain or models |
 | `scripts/test-qa-window-reopen.py` | Compiled actual delegate reopen decisions with inert UI boundaries; nil-opener fallback, activation and duplicate-window regressions; not native window proof |
 | `scripts/native_answer_qualification.py` | Offline per-trial acoustic-to-visible calculation on independently reviewed evidence; exact integer uncertainty/deadline/identity/first-answer gates; never authenticates evidence or grants native acceptance |

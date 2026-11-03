@@ -3035,7 +3035,8 @@ enum ProfileTest {
             from: strictPacket(evidence, ["p0"]), request: request).insights.first
         check("passage IDs attach original complete evidence and app-owned provenance",
               original?.detail.contains("[p0] " + source) == true && original?.detail.hasSuffix(evidence) == true && original?.evidenceQuote == evidence &&
-              original?.source == source && original?.evidenceSources == [source])
+              original?.source == source && original?.evidenceSources == [source]
+              && original?.evidenceReferenceIndices == [0])
         let multiRequest = AnalysisRequest(transcript: request.transcript, currentQuestion: request.currentQuestion,
             knownInsightTitles: [], references: request.references, instructions: "", callBrief: "",
             allowGeneralKnowledge: false, knownDocumentNames: [source, "Other guide.md"],
@@ -5473,6 +5474,20 @@ enum ProfileTest {
         check("redact: supporting evidence and question identity survive restoration",
               back.insights[0].evidenceQuote == "Send the export to a@b.co." &&
               back.insights[0].answerKey == request.currentQuestion)
+        let grounded = InsightDraft(kindKey: "answer", title: "From your docs", detail: "redacted",
+            source: "doc", reply: "Use [EMAIL_1].", evidenceQuote: red.references[0].text,
+            answerKey: red.currentQuestion, evidenceSources: ["doc"], evidenceReferences: red.references,
+            evidenceReferenceIndices: [0])
+        let groundedResult = AnalysisResult(insights: [grounded], sentiment: [:], read: nil, coach: nil, resolved: [])
+        let canonical = req.restore(groundedResult, originalReferences: request.references,
+            redactedReferences: red.references, requireStrictEvidence: true).insights[0]
+        check("redact: actual request keeps canonical evidence provenance",
+              canonical.evidenceSources == ["doc"] && canonical.evidenceReferences?.first?.text == request.references[0].text
+              && canonical.evidenceQuote == request.references[0].text)
+        let unknown = req.restore(groundedResult, originalReferences: request.references,
+            redactedReferences: [], requireStrictEvidence: true).insights[0]
+        check("redact: missing canonical mapping cannot display a grounded answer",
+              unknown.source == nil && unknown.reply == nil && unknown.answerKey == request.currentQuestion)
     }
 
     static func testRetention() {

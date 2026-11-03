@@ -26,6 +26,8 @@ struct InsightDraft {
     /// App-selected provenance for a strict answer; never decoded from model names.
     var evidenceSources: [String]? = nil
     var evidenceReferences: [KBReference]? = nil
+    /// Exact request positions resolved locally from validated passage IDs.
+    var evidenceReferenceIndices: [Int]? = nil
 }
 
 /// Everything a provider needs for one analysis pass.
@@ -423,10 +425,13 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         let allowed = Set(request.knownDocumentNames.map { $0.lowercased() })
         let byID = Dictionary(uniqueKeysWithValues: request.references.enumerated().map { ("p\($0.offset)", $0.element) })
         var selected: [KBReference] = []
+        var selectedIndices: [Int] = []
         for id in payload.evidence_ids {
             guard let reference = byID[id], allowed.contains(reference.documentName.lowercased()),
+                  let index = Int(id.dropFirst()), request.references.indices.contains(index),
                   !reference.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return result(fallback) }
             selected.append(reference)
+            selectedIndices.append(index)
         }
         var sources: [String] = []
         for reference in selected where !sources.contains(reference.documentName) { sources.append(reference.documentName) }
@@ -436,7 +441,8 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         }.joined(separator: "\n\n")
         return result(InsightDraft(kindKey: kind, title: "From your docs", detail: labeledEvidence,
             source: sources.joined(separator: "; "), reply: reply, evidenceQuote: evidence,
-            answerKey: request.currentQuestion, evidenceSources: sources, evidenceReferences: selected))
+            answerKey: request.currentQuestion, evidenceSources: sources, evidenceReferences: selected,
+            evidenceReferenceIndices: selectedIndices))
     }
 
     /// Sent only while no card has been shown yet, so the user isn't left
@@ -586,7 +592,8 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                     answer = InsightDraft(kindKey: kind, title: answer.title, detail: answer.detail,
                         source: answer.source, reply: answer.reply, supersedes: answer.supersedes,
                         evidenceQuote: answer.evidenceQuote, answerKey: answer.answerKey,
-                        evidenceSources: answer.evidenceSources, evidenceReferences: answer.evidenceReferences)
+                        evidenceSources: answer.evidenceSources, evidenceReferences: answer.evidenceReferences,
+                        evidenceReferenceIndices: answer.evidenceReferenceIndices)
                 }
                 reviewed = [answer]
             } else {

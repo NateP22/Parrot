@@ -58,6 +58,14 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_26.6.app/Contents/Developer
           xcodebuild -version
           test "$(xcrun --sdk macosx --show-sdk-version)" = 26.5
+      - name: Verify source-grounded context and canonical evidence
+        run: |
+          set -o pipefail
+          mkdir source-grounded-evidence
+          git fetch --no-tags --depth=1 origin ed9934a7938a3fb2c60975e298a4c6a2359437d7
+          python3 -B scripts/test-document-review-context.py | tee source-grounded-evidence/document-review-context.log
+          python3 -B scripts/test-redacted-evidence-roundtrip.py --source-ref ed9934a7938a3fb2c60975e298a4c6a2359437d7 --expect-red | tee source-grounded-evidence/redacted-evidence-before.log
+          python3 -B scripts/test-redacted-evidence-roundtrip.py | tee source-grounded-evidence/redacted-evidence-after.log
       - uses: actions/cache@v4
         # Do not share Mac26 compiled objects with the different host/toolchain.
         if: inputs.runner != 'macos-15' && !inputs.cross_compile_arm64 && !inputs.arm_setup_only
@@ -111,4 +119,5 @@ jobs:
             Parrot-arm64-build-only.zip
             Parrot-arm64-setup-only.zip
             build-evidence/
+            source-grounded-evidence/
           retention-days: 7

@@ -168,14 +168,68 @@ extension Redactor {
         return copy
     }
 
-    func restore(_ r: AnalysisResult) -> AnalysisResult {
+    /// Canonical evidence comes from the original request, not placeholder
+    /// substitution. Different originals can redact to the same bytes.
+    static func canonicalEvidence(_ selected: [KBReference], indices selectedIndices: [Int],
+                                  original: [KBReference], redacted: [KBReference])
+        -> (references: [KBReference], indices: [Int])? {
+        guard original.count == redacted.count, selected.count == selectedIndices.count else { return nil }
+        func same(_ a: KBReference, _ b: KBReference) -> Bool {
+            a.documentName == b.documentName && a.note == b.note && a.text == b.text
+        }
+        var restored: [KBReference] = []
+        var indices: [Int] = []
+        for (reference, index) in zip(selected, selectedIndices) {
+            let matches = redacted.indices.filter { same(redacted[$0], reference) }
+            guard redacted.indices.contains(index), matches.contains(index),
+                  matches.allSatisfy({ same(original[$0], original[index]) }),
+                  original[index].documentName == reference.documentName,
+                  original[index].note == reference.note else { return nil }
+            restored.append(original[index])
+            indices.append(index)
+        }
+        return (restored, indices)
+    }
+
+    func restore(_ r: AnalysisResult, originalReferences: [KBReference] = [],
+                 redactedReferences: [KBReference] = [],
+                 requireStrictEvidence: Bool = false) -> AnalysisResult {
         AnalysisResult(
             insights: r.insights.map { d in
-                InsightDraft(kindKey: d.kindKey, title: restore(d.title), detail: restore(d.detail),
+                var restored = InsightDraft(kindKey: d.kindKey, title: restore(d.title), detail: restore(d.detail),
                              source: d.source, reply: d.reply.map { restore($0) },
                              supersedes: d.supersedes.map { restore($0) },
                              evidenceQuote: d.evidenceQuote.map { restore($0) },
-                             answerKey: d.answerKey.map { restore($0) })
+                             answerKey: d.answerKey.map { restore($0) },
+                             evidenceSources: d.evidenceSources, evidenceReferences: d.evidenceReferences,
+                             evidenceReferenceIndices: d.evidenceReferenceIndices)
+                func rejected() -> InsightDraft {
+                    ClaudeAnalysisProvider.applyingEvidenceReview(restored, approved: false)
+                }
+                if requireStrictEvidence && d.source != nil {
+                    guard let refs = d.evidenceReferences, !refs.isEmpty else { return rejected() }
+                }
+                if let selected = d.evidenceReferences, !selected.isEmpty {
+                    guard let selectedIndices = d.evidenceReferenceIndices,
+                          let evidence = Self.canonicalEvidence(selected, indices: selectedIndices,
+                        original: originalReferences, redacted: redactedReferences) else { return rejected() }
+                    var sources: [String] = []
+                    for ref in evidence.references where !sources.contains(ref.documentName) {
+                        sources.append(ref.documentName)
+                    }
+                    guard d.evidenceSources == sources, d.source == sources.joined(separator: "; ")
+                        else { return rejected() }
+                    // Canonical literals such as [EMAIL_1] must remain byte-exact.
+                    restored = InsightDraft(kindKey: restored.kindKey, title: restored.title,
+                        detail: zip(evidence.indices, evidence.references).map {
+                            "[p\($0.0)] \($0.1.documentName)\n\($0.1.text)"
+                        }.joined(separator: "\n\n"), source: d.source, reply: restored.reply,
+                        supersedes: restored.supersedes,
+                        evidenceQuote: evidence.references.map(\.text).joined(separator: "\n\n"),
+                        answerKey: restored.answerKey, evidenceSources: d.evidenceSources,
+                        evidenceReferences: evidence.references, evidenceReferenceIndices: evidence.indices)
+                }
+                return restored
             },
             sentiment: r.sentiment,
             read: r.read.map { restore($0) },

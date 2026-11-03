@@ -576,12 +576,15 @@ final class SwitchingAnalysisProvider: AnalysisProvider {
         if request.previousCallIsPrivate { outgoing.previousCallContext = "" }
         guard Redactor.isEnabled else { return try await liveProvider.analyze(outgoing) }
         var redactor = Redactor()
-        let result = try await liveProvider.analyze(redactor.redact(outgoing))
+        let redacted = redactor.redact(outgoing)
+        let result = try await liveProvider.analyze(redacted)
         // Reviewed wording/evidence were selected locally from the original
         // catalog. Replacing placeholders in them would alter approved text.
         let reviewedReply = request.currentQuestion != nil && !request.allowGeneralKnowledge
             && request.reviewedCatalog != nil
-        return reviewedReply ? result : redactor.restore(result)
+        return reviewedReply ? result : redactor.restore(result,
+            originalReferences: outgoing.references, redactedReferences: redacted.references,
+            requireStrictEvidence: request.currentQuestion != nil && !request.allowGeneralKnowledge)
     }
 
     func summarize(transcript: String, insightTitles: [String], bookmarks: [String],
