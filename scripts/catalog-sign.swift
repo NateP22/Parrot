@@ -29,10 +29,37 @@ enum CatalogSigner {
                 "Use init-key KEY or sign KEY PAYLOAD APPROVED_PAYLOAD_SHA256 OUTPUT"])
         }
         let payload = try Data(contentsOf: URL(fileURLWithPath: args[2]))
-        guard let object = try JSONSerialization.jsonObject(with: payload) as? [String: Any],
-              object["format"] as? String == "parrot-reviewed-answers-v2" else {
+        guard let object = try JSONSerialization.jsonObject(with: payload) as? [String: Any] else {
             throw NSError(domain: "CatalogSigner", code: 4, userInfo: [NSLocalizedDescriptionKey:
-                "Expected a reviewed v2 payload; no legacy scope inference is allowed"])
+                "Expected a reviewed payload; no legacy scope inference is allowed"])
+        }
+        let envelopeFormat: String
+        switch object["format"] as? String {
+        case "parrot-reviewed-answers-v2":
+            envelopeFormat = "parrot-reviewed-answers-signed-v2"
+        case "parrot-reviewed-facts-v1":
+            guard object["mode"] as? String == "reviewedFacts",
+                  let answers = object["answers"] as? [Any], answers.isEmpty,
+                  let facts = object["facts"] as? [[String: Any]], !facts.isEmpty,
+                  facts.allSatisfy({ fact in
+                      guard let review = fact["review"] as? [String: Any],
+                            review["verdict"] as? String == "PASS_SOURCE_FACT",
+                            let reviewer = review["reviewer"] as? String,
+                            !reviewer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                            let date = review["reviewedAt"] as? String,
+                            !date.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                            let digest = review["digest"] as? String,
+                            digest.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
+                        else { return false }
+                      return true
+                  }) else {
+                throw NSError(domain: "CatalogSigner", code: 4, userInfo: [NSLocalizedDescriptionKey:
+                    "Fact mode requires individually completed source reviews; nothing signed"])
+            }
+            envelopeFormat = "parrot-reviewed-facts-signed-v1"
+        default:
+            throw NSError(domain: "CatalogSigner", code: 4, userInfo: [NSLocalizedDescriptionKey:
+                "Unsupported reviewed payload format; nothing signed"])
         }
         let digest = SHA256.hash(data: payload).map { String(format: "%02x", $0) }.joined()
         guard digest == args[3], digest.count == 64 else {
@@ -41,7 +68,7 @@ enum CatalogSigner {
         }
         let key = try Curve25519.Signing.PrivateKey(rawRepresentation:
             Data(contentsOf: URL(fileURLWithPath: args[1])))
-        let envelope: [String: Any] = ["format": "parrot-reviewed-answers-signed-v2",
+        let envelope: [String: Any] = ["format": envelopeFormat,
             "payload": payload.base64EncodedString(),
             "signature": try key.signature(for: payload).base64EncodedString()]
         let data = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
