@@ -28,6 +28,8 @@ final class KnowledgeBaseService {
     private var repositoryPassages: [RepositoryKnowledge.Passage] = []
     private var repositoryTerms: [[String]] = []
     private var repositoryContentRevision: String?
+    private(set) var repositoryLoading = false
+    private var repositoryWorkToken = UUID()
     private var documentGeneration = UUID()
 
     /// Configured-but-unreadable source stays strict; never falls back to the
@@ -36,6 +38,7 @@ final class KnowledgeBaseService {
         repositoryConfigured ? (repositoryContentRevision ?? "unavailable") + ":" + documentGeneration.uuidString : nil
     }
     var repositoryStatus: String? {
+        if repositoryLoading { return "Preparing code source on this Mac…" }
         guard repositoryConfigured else { return nil }
         guard let source = repositorySource else { return repositoryError ?? "Code source unavailable. Re-import its snapshot." }
         return "Code first: \(source.repository) @ \(source.commit.prefix(8)); \(source.files.count) source files. Documents are secondary."
@@ -338,6 +341,7 @@ final class KnowledgeBaseService {
     }
 
     var reviewedAnswerStatus: String? {
+        guard !repositoryConfigured else { return nil }
         guard hasReviewedCatalog else { return nil }
         if reviewedCatalogError != nil { return "Reviewed answers unavailable — re-import the library." }
         guard let reviewedCatalog else { return nil }
@@ -417,21 +421,64 @@ final class KnowledgeBaseService {
 
     /// Separate importer: package.json/config.json inside the export remain
     /// original code, and never enter reviewed-catalog decoding or basename IDs.
-    func importRepositorySource(at url: URL) throws {
+    func importRepositorySource(at url: URL) async throws {
         let accessing = url.startAccessingSecurityScopedResource()
         defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        let size = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-        guard size.isRegularFile == true, let bytes = size.fileSize,
-              bytes <= RepositoryKnowledge.maximumBytes else { throw RepositoryKnowledge.Failure.invalid("package size/type") }
-        try installRepositorySource(Data(contentsOf: url))
+        let token = UUID()
+        repositoryWorkToken = token
+        repositoryLoading = true
+        defer { if repositoryWorkToken == token { repositoryLoading = false } }
+        let prepared = try await Task.detached(priority: .userInitiated) {
+            try Self.readPreparedRepository(at: url)
+        }.value
+        guard repositoryWorkToken == token else { throw RepositoryKnowledge.Failure.invalid("superseded import") }
+        try publishRepository(prepared.index, data: prepared.data)
     }
 
-    func installRepositorySource(_ data: Data) throws {
-        let candidate = try RepositoryKnowledge.decode(data)
-        let passages = candidate.passages()
+    private struct PreparedRepository {
+        let source: RepositoryKnowledge
+        let passages: [RepositoryKnowledge.Passage]
+        let terms: [[String]]
+    }
+
+    private nonisolated static func prepareRepository(_ data: Data) throws -> PreparedRepository {
+        let source = try RepositoryKnowledge.decode(data)
+        let passages = source.passages()
         guard !passages.isEmpty else { throw RepositoryKnowledge.Failure.invalid("empty index") }
+        return PreparedRepository(source: source, passages: passages,
+            terms: passages.map { lexicalTokens(RepositoryKnowledge.tokens($0.searchText).joined(separator: " ")) })
+    }
+
+    private nonisolated static func readPreparedRepository(at url: URL) throws -> (data: Data, index: PreparedRepository) {
+        let size = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
+        guard size.isRegularFile == true, size.isSymbolicLink != true, let bytes = size.fileSize,
+              bytes <= RepositoryKnowledge.maximumBytes else { throw RepositoryKnowledge.Failure.invalid("package size/type") }
+        let data = try Data(contentsOf: url)
+        return (data, try prepareRepository(data))
+    }
+
+    /// Synchronous isolated-test seam. Normal UI import and saved-index load
+    /// prepare large code inventories on a worker, never MainActor.
+    func installRepositorySource(_ data: Data) throws {
+        try publishRepository(Self.prepareRepository(data), data: data)
+    }
+
+    private func activateRepository(_ index: PreparedRepository) {
+        repositoryWorkToken = UUID()
+        repositoryLoading = false
+        repositorySource = index.source
+        repositoryPassages = index.passages
+        repositoryTerms = index.terms
+        repositoryContentRevision = index.source.revision
+        repositoryConfigured = true
+        repositoryError = nil
+    }
+
+    private func publishRepository(_ index: PreparedRepository, data: Data) throws {
         // Record intent before publishing new bytes. A failed first setup stays
         // unavailable/strict in this session; failed replacement keeps old code.
+        repositoryWorkToken = UUID()
+        repositoryLoading = false
         repositoryConfigured = true
         if persistent {
             try FileManager.default.createDirectory(at: repositoryURL.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -440,31 +487,34 @@ final class KnowledgeBaseService {
             guard try Data(contentsOf: repositoryURL) == data else { throw RepositoryKnowledge.Failure.invalid("readback") }
         }
         // No await or partial publication: all questions see the old or new index.
-        repositorySource = candidate
-        repositoryPassages = passages
-        repositoryTerms = passages.map { Self.lexicalTokens(RepositoryKnowledge.tokens($0.searchText).joined(separator: " ")) }
-        repositoryContentRevision = candidate.revision
-        repositoryConfigured = true
-        repositoryError = nil
+        activateRepository(index)
     }
 
     private func loadRepositorySource() {
         let exists = FileManager.default.fileExists(atPath: repositoryURL.path)
         guard exists || FileManager.default.fileExists(atPath: repositoryRequiredURL.path) else { return }
         repositoryConfigured = true
+        let token = UUID()
+        repositoryWorkToken = token
         do {
             // Migrate a pre-marker snapshot before using it. Losing the source
             // later must not switch the app back to a preserved reply catalog.
             try Data("repository-first-v1\n".utf8).write(to: repositoryRequiredURL, options: .atomic)
-            let values = try repositoryURL.resourceValues(forKeys: [.fileSizeKey])
-            guard let size = values.fileSize, size <= RepositoryKnowledge.maximumBytes else {
-                throw RepositoryKnowledge.Failure.invalid("stored package size")
+            repositoryLoading = true
+            let url = repositoryURL
+            Task { [weak self] in
+                do {
+                    let prepared = try await Task.detached(priority: .utility) {
+                        try Self.readPreparedRepository(at: url)
+                    }.value
+                    guard let self, self.repositoryWorkToken == token else { return }
+                    self.activateRepository(prepared.index)
+                } catch {
+                    guard let self, self.repositoryWorkToken == token else { return }
+                    self.repositoryError = error.localizedDescription
+                    self.repositoryLoading = false
+                }
             }
-            let source = try RepositoryKnowledge.decode(Data(contentsOf: repositoryURL))
-            repositorySource = source
-            repositoryPassages = source.passages()
-            repositoryTerms = repositoryPassages.map { Self.lexicalTokens(RepositoryKnowledge.tokens($0.searchText).joined(separator: " ")) }
-            repositoryContentRevision = source.revision
         } catch { repositoryError = error.localizedDescription }
     }
 

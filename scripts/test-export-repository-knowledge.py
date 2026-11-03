@@ -46,7 +46,7 @@ class ExportTests(unittest.TestCase):
             module.export("fictional/atlas", "main", api=self.fixture(b"sk-ant-" + b"X" * 30).__getitem__)
 
     def test_unsafe_paths(self):
-        for path in ("/x.js", "../x.js", "x/../x.js", "x//x.js", ".env.json", "secrets/x.json", "x.min.js", "tests/a.js", "vendor/x.js", "token.json", "api-keys.json", "keychain.json"):
+        for path in ("/x.js", "../x.js", "x/../x.js", "x//x.js", ".env.json", "secrets/x.json", "x.min.js", "tests/a.js", "vendor/x.js", "token.json", "api-keys.json", "keychain.json", "output/qa/installed-backup/client/index.html", "archives/old/host/a.jsx", "snapshots/client/a.js", "server/scripts/fixture.mjs"):
             self.assertFalse(module.permits(path), path)
 
     def test_additional_credential_families(self):
@@ -70,6 +70,8 @@ class ExportTests(unittest.TestCase):
     def test_nested_same_basename_allowed(self):
         self.assertTrue(module.permits("client/settings.json"))
         self.assertTrue(module.permits("host/settings.json"))
+        self.assertTrue(module.permits("server/runtime.mjs"))
+        self.assertTrue(module.permits("host/shared.jsxinc"))
 
     def test_only_get_endpoints_and_ref_resolved_once(self):
         responses = self.fixture()

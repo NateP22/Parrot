@@ -62,7 +62,7 @@ enum RepositoryKnowledgeComponentTest {
         check("symbolic commit refused", refuses(try packet(input, commit: "main")))
         check("empty inventory refused", refuses(try packet([])))
         for path in ["../x.js", "/x.js", "x/../y.js", "x\\y.js", "x//y.js", "x/./y.js", ".env.json",
-                     "secrets/key.json", "api-keys.json", "token.json", "keychain.json", "node_modules/x.js", "vendor/x.js", "docs/example.js", "tests/x.js", "x.min.js", "x.test.js", "a\nb.js"] {
+                     "secrets/key.json", "api-keys.json", "token.json", "keychain.json", "node_modules/x.js", "vendor/x.js", "docs/example.js", "tests/x.js", "x.min.js", "x.test.js", "a\nb.js", "output/qa/installed-backup/client/index.html", "archives/old/host/a.jsx", "snapshots/client/a.js", "server/scripts/fixture.mjs"] {
             check("unsafe/nonruntime path refused \(path.debugDescription)", !RepositoryKnowledge.permits(path: path))
         }
         check("credential content refused", refuses(try packet([file("client/a.js", "const key = \"sk-ant-" + String(repeating: "X", count: 30) + "\";")])))

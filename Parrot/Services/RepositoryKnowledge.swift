@@ -38,14 +38,16 @@ struct RepositoryKnowledge: Codable {
         let parts = path.lowercased().components(separatedBy: "/")
         let excluded: Set<String> = ["node_modules", "vendor", "dist", "build", ".build", "coverage",
             "test", "tests", "__tests__", "fixtures", "docs", "documentation", "__snapshots__",
-            "generated", "logs", "tmp", "cache", "certificates", "credentials", "secrets"]
-        guard !parts.contains(where: { $0.hasPrefix(".") || excluded.contains($0) }),
+            "generated", "logs", "tmp", "cache", "certificates", "credentials", "secrets",
+            "output", "outputs", "qa", "e2e", "test-data", "test_data", "testdata", "artifacts",
+            "evidence", "backup", "backups", "archive", "archives", "snapshots", "examples", "samples", "scripts", "benchmarks"]
+        guard !parts.contains(where: { $0.hasPrefix(".") || excluded.contains($0) || $0.contains("installed-backup") }),
               let name = parts.last, !name.contains("secret"), !name.contains("credential"),
               !name.contains("private-key"), !name.hasSuffix(".min.js"),
               !name.contains(".test."), !name.contains(".spec.") else { return false }
         let credentialName = name.replacingOccurrences(of: "-", with: "").replacingOccurrences(of: "_", with: "")
         guard !["token", "apikey", "privatekey", "password", "keychain"].contains(where: credentialName.contains) else { return false }
-        return ["js", "jsx", "ts", "tsx", "swift", "json", "html", "css", "scss", "vue", "svelte",
+        return ["js", "mjs", "cjs", "jsx", "jsxinc", "ts", "tsx", "swift", "json", "html", "css", "scss", "vue", "svelte",
                 "py", "go", "rs", "java", "kt", "c", "h", "cpp", "m", "mm", "sql", "xml"]
             .contains((path as NSString).pathExtension.lowercased())
     }

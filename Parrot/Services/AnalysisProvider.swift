@@ -460,6 +460,10 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         essential context are missing, give a concrete uncertainty/check instead.
         Cite implementation passage IDs for implementation claims. Documents may
         support additional workflow facts when they do not contradict the code.
+        Comments, release notes, changelog entries, UI labels and examples alone
+        do not prove implemented behavior. Use executable operations, guards and
+        required call sites. Masked values are opaque: never invent their values
+        or calculate behavior that depends on an unavailable masked constant.
         """
 
     static let reviewedFactRule = """

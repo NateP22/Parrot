@@ -19,8 +19,10 @@ MAX_BYTES = 24 * 1024 * 1024
 MAX_FILE_BYTES = 512 * 1024
 EXCLUDED = {"node_modules", "vendor", "dist", "build", ".build", "coverage", "test", "tests",
             "__tests__", "fixtures", "docs", "documentation", "__snapshots__", "generated",
-            "logs", "tmp", "cache", "certificates", "credentials", "secrets"}
-EXTENSIONS = {"js", "jsx", "ts", "tsx", "swift", "json", "html", "css", "scss", "vue", "svelte",
+            "logs", "tmp", "cache", "certificates", "credentials", "secrets", "output", "outputs", "qa", "e2e",
+            "test-data", "test_data", "testdata", "artifacts", "evidence", "backup", "backups", "archive", "archives",
+            "snapshots", "examples", "samples", "scripts", "benchmarks"}
+EXTENSIONS = {"js", "mjs", "cjs", "jsx", "jsxinc", "ts", "tsx", "swift", "json", "html", "css", "scss", "vue", "svelte",
               "py", "go", "rs", "java", "kt", "c", "h", "cpp", "m", "mm", "sql", "xml"}
 SECRET = re.compile(r"sk-ant-[A-Za-z0-9_-]{16,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[baprs]-[A-Za-z0-9-]{16,}|AIza[A-Za-z0-9_-]{30,}|(?:AKIA|ASIA)[A-Z0-9]{16}|-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----")
 ASSIGNMENT = re.compile(r'''(?i)(?:api[_-]?key|access[_-]?token|auth[_-]?token|password|client[_-]?secret)["']?\s*[:=]\s*["'][A-Za-z0-9_+/=\-]{12,}["']''')
@@ -30,7 +32,7 @@ def permits(path):
     if not isinstance(path, str) or not path or len(path.encode()) > 512 or path.startswith("/") or "\\" in path or any(ord(c) < 32 for c in path):
         return False
     parts = path.lower().split("/")
-    if any(not p or p in {".", ".."} or p.startswith(".") or p in EXCLUDED for p in parts):
+    if any(not p or p in {".", ".."} or p.startswith(".") or p in EXCLUDED or "installed-backup" in p for p in parts):
         return False
     name = parts[-1]
     credential_name = name.replace("-", "").replace("_", "")

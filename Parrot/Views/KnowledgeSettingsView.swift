@@ -32,6 +32,7 @@ struct KnowledgeSettingsView: View {
                         Text(kb.repositoryStatus ?? "No repository snapshot imported.")
                             .font(Theme.Typography.secondary)
                         Button("Import code snapshot…") { importingRepository = true }
+                            .disabled(kb.repositoryLoading)
                         if let error = repositoryImportError {
                             Text(error).font(Theme.Typography.secondary).foregroundStyle(Theme.Colors.warn)
                         }
@@ -76,11 +77,13 @@ struct KnowledgeSettingsView: View {
             isPresented: $importingRepository,
             allowedContentTypes: [.data], allowsMultipleSelection: false
         ) { result in
-            do {
-                guard let url = try result.get().first else { return }
-                try kb.importRepositorySource(at: url)
-                repositoryImportError = nil
-            } catch { repositoryImportError = error.localizedDescription }
+            Task {
+                do {
+                    guard let url = try result.get().first else { return }
+                    try await kb.importRepositorySource(at: url)
+                    repositoryImportError = nil
+                } catch { repositoryImportError = error.localizedDescription }
+            }
         }
         .fileImporter(
             isPresented: $importing,

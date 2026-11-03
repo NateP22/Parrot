@@ -385,6 +385,13 @@ final class CallAnalysisEngine {
             knowledgeBase?.reviewedAnswerSnapshot(for: profileID)?.revisionToken == request.reviewedCatalog?.revisionToken
     }
 
+    /// One code search retains referents in follow-ups such as "How do I do
+    /// that?". Repeating the latest question weights it over older context;
+    /// conversation remains retrieval context, never implementation evidence.
+    nonisolated static func repositoryRetrievalQuery(question: String, recent: [String]) -> String {
+        ([question, question] + Array(recent.suffix(3))).joined(separator: "\n")
+    }
+
     private func requeueAnalysis(previousAnalyzedCount: Int, previousPendingSince: Date?) {
         clearPendingExcerpts()
         lastAnalyzedCount = previousAnalyzedCount
@@ -465,7 +472,9 @@ final class CallAnalysisEngine {
         if let kb = knowledgeBase {
             if let question = currentQuestion {
                 let strict = !requestedGeneralKnowledge
-                references = await kb.search(query: question, profileID: requestedProfileID,
+                let query = requestedRepositoryRevision == nil ? question
+                    : Self.repositoryRetrievalQuery(question: question, recent: recent.map(\.text))
+                references = await kb.search(query: query, profileID: requestedProfileID,
                     topK: strict ? 12 : 2, contextNeighbors: strict ? 1 : 0)
                 guard isActive, !Task.isCancelled else { return }
             }
@@ -492,7 +501,7 @@ final class CallAnalysisEngine {
             ? knowledgeBase?.reviewedAnswerSnapshot(for: requestedProfileID) : nil
         let answerTrace = answerTraceRecorder.link(context: questionSegment?.trace,
             profileID: requestedProfileID, catalogRevisionToken: reviewedCatalog?.revisionToken,
-            allowGeneralKnowledge: requestedGeneralKnowledge)
+            allowGeneralKnowledge: requestedGeneralKnowledge, repositoryRevision: requestedRepositoryRevision)
         let request = AnalysisRequest(
             transcript: transcript,
             currentQuestion: currentQuestion,

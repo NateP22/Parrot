@@ -38,8 +38,20 @@ enum RepositoryKnowledgeTests {
         check("repository: old catalog preserved before import", kb.reviewedAnswerSnapshot(for: nil) != nil)
         try kb.installRepositorySource(data)
         let revision = kb.repositoryRevision!
+        let trace = AnswerTraceRecorder(enabled: true)
+        let sessionID = trace.startSession()
+        let context = trace.makeContext(source: .them, expectedSessionID: sessionID)
+        let linked = trace.link(context: context, profileID: nil, catalogRevisionToken: nil,
+            allowGeneralKnowledge: false, repositoryRevision: revision)
+        check("repository: trace pins repository revision", linked?.identity.repositoryRevision == revision)
+        check("repository: trace rejects arbitrary source strings", trace.link(context: context,
+            profileID: nil, catalogRevisionToken: nil, repositoryRevision: "untrusted file path") == nil)
         check("repository: explicit import bypasses catalog", kb.reviewedAnswerSnapshot(for: nil) == nil)
         let refs = await kb.search(query: "page links enabled", topK: 6)
+        let followup = CallAnalysisEngine.repositoryRetrievalQuery(question: "How do I do that?",
+            recent: ["I want page links disabled.", "How do I do that?"])
+        let followupRefs = await kb.search(query: followup, topK: 6)
+        check("repository: follow-up retains implementation referent", followupRefs.first?.repositoryCitation?.path == "host/pageLinks.js")
         check("repository: actual code retrieval", refs.first?.repositoryCitation?.path == "host/pageLinks.js")
         check("repository: JSON distinct paths in source inventory", kb.documentsInPlay(for: nil).contains("fictional/atlas/client/settings.json") && kb.documentsInPlay(for: nil).contains("fictional/atlas/host/settings.json"))
         do { try kb.installRepositorySource(Data("invalid".utf8)); check("repository: invalid replacement refused", false) }
@@ -118,13 +130,19 @@ enum RepositoryKnowledgeTests {
         let stored = KnowledgeBaseService(persistent: true, storageURL: index)
         try stored.installRepositorySource(data)
         let reopened = KnowledgeBaseService(persistent: true, storageURL: index)
+        let loadDeadline = Date.now + 2
+        while reopened.repositoryLoading && Date.now < loadDeadline { try await Task.sleep(nanoseconds: 1_000_000) }
         check("repository: source survives reopen", reopened.repositorySource?.commit == kb.repositorySource?.commit)
         try FileManager.default.removeItem(at: folder.appendingPathComponent("repository-source.parrotrepo"))
         let missing = KnowledgeBaseService(persistent: true, storageURL: index)
+        let missingDeadline = Date.now + 2
+        while missing.repositoryLoading && Date.now < missingDeadline { try await Task.sleep(nanoseconds: 1_000_000) }
         check("repository: missing source retains strict intent", missing.repositoryRevision != nil && missing.repositorySource == nil && missing.reviewedAnswerSnapshot(for: nil) == nil)
         check("repository: missing source retrieval stays empty", await missing.search(query: "page links").isEmpty)
         try Data("corrupt".utf8).write(to: folder.appendingPathComponent("repository-source.parrotrepo"))
         let corrupt = KnowledgeBaseService(persistent: true, storageURL: index)
+        let corruptDeadline = Date.now + 2
+        while corrupt.repositoryLoading && Date.now < corruptDeadline { try await Task.sleep(nanoseconds: 1_000_000) }
         check("repository: corrupt source retains strict intent", corrupt.repositoryRevision != nil && corrupt.repositorySource == nil)
         try data.write(to: folder.appendingPathComponent("repository-source.parrotrepo"))
         try FileManager.default.removeItem(at: folder.appendingPathComponent("repository-source.parrotrepo.required"))

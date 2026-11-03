@@ -50,6 +50,8 @@ struct AnswerTraceRequestIdentity: Codable, Sendable {
     let allowGeneralKnowledge: Bool?
     /// Admitted snapshot identity, not the signed catalog's payload SHA.
     let catalogRevisionToken: String?
+    /// Optional for old journals; pinned code/document generation, never text.
+    var repositoryRevision: String? = nil
 }
 
 /// Retained by a request across awaits and redaction; never sent to a model.
@@ -167,7 +169,7 @@ final class AnswerTraceRecorder: @unchecked Sendable {
     }
 
     func link(context: AnswerTraceContext?, profileID: UUID?, catalogRevisionToken: String?,
-              allowGeneralKnowledge: Bool? = nil) -> AnswerTraceLink? {
+              allowGeneralKnowledge: Bool? = nil, repositoryRevision: String? = nil) -> AnswerTraceLink? {
         guard let context else { return nil }
         return lock.withLock {
             guard enabled else { return nil }
@@ -175,9 +177,17 @@ final class AnswerTraceRecorder: @unchecked Sendable {
                   catalogRevisionToken == nil || catalogRevisionToken?.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
                 rejectedContexts += 1; return nil
             }
+            if let revision = repositoryRevision {
+                let parts = revision.components(separatedBy: ":")
+                guard parts.count == 2, UUID(uuidString: parts[1]) != nil,
+                      parts[0] == "unavailable" || parts[0].range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else {
+                    rejectedContexts += 1; return nil
+                }
+            }
             return AnswerTraceLink(context: context,
                 identity: AnswerTraceRequestIdentity(requestID: UUID(), profileID: profileID,
-                    allowGeneralKnowledge: allowGeneralKnowledge, catalogRevisionToken: catalogRevisionToken), recorder: self)
+                    allowGeneralKnowledge: allowGeneralKnowledge, catalogRevisionToken: catalogRevisionToken,
+                    repositoryRevision: repositoryRevision), recorder: self)
         }
     }
 
