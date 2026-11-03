@@ -94,9 +94,10 @@ enum ReviewedFactsEvalChecks {
         let prepared = try ReviewedSelectorInput.prepareFacts(manifestURL: url, allowedRoot: root)
         check("fact input admits exact signed/source bytes", prepared.snapshot.facts.count == 1 &&
             prepared.snapshot.answers.isEmpty && prepared.catalogData == fixtureData)
+        let projectedCases = String(decoding: try JSONEncoder().encode(prepared.cases), as: UTF8.self)
         check("fact input preserves all questions and drops oracle annotations",
             prepared.cases.map(\.question) == questions &&
-            !String(decoding: try JSONEncoder().encode(prepared.cases), as: UTF8.self).contains("DO_NOT_SEND_ORACLE"))
+            !projectedCases.contains("DO_NOT_SEND_ORACLE"))
         manifest["schema"] = 1
         try writeManifest()
         do {
