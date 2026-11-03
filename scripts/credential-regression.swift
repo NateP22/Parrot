@@ -72,6 +72,37 @@ if CommandLine.arguments.contains("--no-ui-tests") {
     exit(failures==0 ? 0:1)
 }
 
+if CommandLine.arguments.contains("--settings-lookup-tests") {
+    Task {
+        records["settings-ready"] = Data("public-settings-fixture".utf8)
+        let ready = await APIKeyStore.settingsKey(account: "settings-ready")
+        check("settings loads an existing key without prompting", ready == .available("public-settings-fixture"))
+        check("settings startup read supplies a no-UI context", interactionRequests == [true])
+        blockedReads["settings-locked"] = errSecInteractionNotAllowed
+        let locked = await APIKeyStore.settingsKey(account: "settings-locked")
+        check("locked settings read is authorization-needed, never missing", locked == .needsAuthorization)
+        let readCount = reads["settings-locked", default: 0]
+        _ = await APIKeyStore.settingsKey(account: "settings-locked")
+        check("ordinary refresh never retries a cached failed secret read", reads["settings-locked"] == readCount + 1)
+        // metadataStatus is deliberately uncached; only that query repeats.
+        records["settings-locked"] = Data("public-existing-fixture".utf8)
+        blockedReads.removeValue(forKey: "settings-locked")
+        let retried = await APIKeyStore.settingsKey(account: "settings-locked", requestAuthorization: true)
+        check("explicit retry recovers the same saved key without save", retried == .available("public-existing-fixture"))
+        check("explicit retry retains ordinary authorization policy", interactionRequests.last! == nil)
+        check("saved-key lookup never adds, updates or deletes credentials", additions.isEmpty && updates.isEmpty && deletions.isEmpty)
+        let absent = await APIKeyStore.settingsKey(account: "settings-absent")
+        check("no existing record is labelled correctly", absent == .notFound)
+        blockedReads["settings-unavailable"] = errSecNotAvailable
+        let unavailable = await APIKeyStore.settingsKey(account: "settings-unavailable")
+        check("service failure is unavailable, never missing", unavailable == .unavailable)
+        let expected = Bundle.main.object(forInfoDictionaryKey: "ParrotKeychainService") as! String
+        check("settings reads only its existing own service", services.allSatisfy { $0 == expected })
+        exit(failures == 0 ? 0 : 1)
+    }
+    dispatchMain()
+}
+
 if CommandLine.arguments.contains("--invalid-service-tests") {
     check("invalid QA metadata rejects save", !APIKeyStore.save("dummy-isolation", account: "isolated"))
     check("invalid QA metadata cannot load", APIKeyStore.load(account: "isolated") == nil)

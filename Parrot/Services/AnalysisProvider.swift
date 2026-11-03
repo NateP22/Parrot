@@ -1675,6 +1675,38 @@ enum APIKeyStore {
         await Task.detached { load(account: account, allowInteraction: allowInteraction) }.value
     }
 
+    enum SettingsKeyResult: Equatable, Sendable {
+        case available(String), notFound, needsAuthorization, unavailable
+    }
+
+    /// Settings never blocks its main actor or starts an authorization prompt
+    /// merely by opening. Only an explicit "Load saved key" may retry a
+    /// previously unavailable read with the ordinary Mac authorization policy.
+    /// This does not replace/delete a credential or change its access controls.
+    static func settingsKey(account: String = "claude-api-key",
+                            requestAuthorization: Bool = false) async -> SettingsKeyResult {
+        await Task.detached { () -> SettingsKeyResult in
+            if requestAuthorization {
+                cache.withLock { values in
+                    if let cached = values[account], cached == nil {
+                        values.removeValue(forKey: account)
+                    }
+                }
+            }
+            let loaded = load(account: account, allowInteraction: requestAuthorization)
+            // A concurrent explicit Save is newer than an in-flight read.
+            let latest = cache.withLock { $0[account] ?? nil }
+            if let key = latest ?? loaded, !key.isEmpty { return .available(key) }
+            if isSessionOnly { return .notFound }
+            switch metadataStatus(account: account, allowInteraction: false) {
+            case errSecItemNotFound: return .notFound
+            case errSecSuccess, errSecInteractionNotAllowed, errSecAuthFailed, errSecUserCanceled:
+                return .needsAuthorization
+            default: return .unavailable
+            }
+        }.value
+    }
+
     static func load(account: String = "claude-api-key", allowInteraction: Bool = true) -> String? {
         // The logic harness must stay hermetic: reading the app's keychain
         // item from an ad-hoc dev binary makes securityd pop a consent dialog

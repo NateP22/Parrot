@@ -869,14 +869,16 @@ struct ProviderKeyField: View {
     @State private var key: String
     @State private var saved = false
     @State private var failed = false
+    @State private var loadingSavedKey = false
+    @State private var keyEditRevision = 0
+    @State private var savedKeyMessage: String?
 
     init(label: String, account: String?, placeholder: String, hint: String) {
         self.label = label
         self.account = account
         self.placeholder = placeholder
         self.hint = hint
-        let stored = account.map { APIKeyStore.load(account: $0) } ?? APIKeyStore.load()
-        _key = State(initialValue: stored ?? "")
+        _key = State(initialValue: "")
     }
 
     var body: some View {
@@ -886,6 +888,8 @@ struct ProviderKeyField: View {
                 .onChange(of: key) {
                     saved = false
                     failed = false
+                    keyEditRevision &+= 1
+                    savedKeyMessage = nil
                 }
 
             HStack {
@@ -896,7 +900,14 @@ struct ProviderKeyField: View {
                     failed = !ok
                     saved = ok
                 }
-                .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(key.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || loadingSavedKey)
+
+                if key.isEmpty {
+                    Button(loadingSavedKey ? "Loading saved key…" : "Load saved key") {
+                        Task { await loadSavedKey(requestAuthorization: true) }
+                    }
+                    .disabled(loadingSavedKey)
+                }
 
                 if saved {
                     Label(APIKeyStore.isSessionOnly ? "Ready for this session" : "Saved", systemImage: "checkmark.circle")
@@ -909,7 +920,33 @@ struct ProviderKeyField: View {
                 }
             }
 
+            if let savedKeyMessage {
+                Hint(savedKeyMessage)
+            }
+
             Hint(hint)
+        }
+        .task { await loadSavedKey(requestAuthorization: false) }
+    }
+
+    @MainActor private func loadSavedKey(requestAuthorization: Bool) async {
+        guard !loadingSavedKey else { return }
+        loadingSavedKey = true
+        let revision = keyEditRevision
+        let result = await APIKeyStore.settingsKey(account: account ?? "claude-api-key",
+                                                   requestAuthorization: requestAuthorization)
+        loadingSavedKey = false
+        guard !Task.isCancelled, revision == keyEditRevision else { return }
+        switch result {
+        case .available(let stored):
+            key = stored
+            savedKeyMessage = nil
+        case .notFound:
+            savedKeyMessage = requestAuthorization ? "No saved key was accessible to this app. Existing keys have not been replaced." : nil
+        case .needsAuthorization:
+            savedKeyMessage = "Your saved key needs Mac approval. Load it here without entering it again."
+        case .unavailable:
+            savedKeyMessage = "Saved key access is unavailable. Existing keys have not been replaced."
         }
     }
 }

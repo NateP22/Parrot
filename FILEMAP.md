@@ -157,7 +157,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Views/BugReportSheet.swift` | 150 | Bug/idea report form + the corner ladybug button |
 | `Views/ReportContentView.swift` | 550 | Report section cards, scorecard rows, talk-ratio bar, prose parser (incl. one-line local reports; knows the meeting's template titles), receipt chips + popover |
 | `Views/SentimentStripView.swift` | 60 | Sentiment gauge strip |
-| `Views/SettingsView.swift` | 900 | All settings sections and provider keys (Knowledge lives in `KnowledgeSettingsView`) |
+| `Views/SettingsView.swift` | 960 | Settings and provider keys; noninteractive asynchronous saved-key load, explicit authorized retry, and preservation of in-flight user edits (Knowledge lives in `KnowledgeSettingsView`) |
 | `Views/ProfilesSettingsView.swift` | 770 | Call-profile editor: kinds, gauges, icon picker; read-only list of documents a profile can use; hosts the Report card; Share / Export / Import (button + drop), Saved Versions (restore) |
 | `Views/ProfileReportCard.swift` | 360 | Profile editor → Report: report choice menu, sections (title, what goes here, paragraph/bullets/scorecard + criteria, promises), coaching on/off + role + focus, the built-in report offer |
 | `Views/ProfileReviewView.swift` | 250 | Review screen for imported files and AI suggestions (source, reason, grouped changes, privacy line, Apply / Save as new / Discard) + the suggestion banner |

@@ -57,6 +57,7 @@ with tempfile.TemporaryDirectory(prefix='parrot-keychain-regression-') as temp:
         status |= subprocess.run([str(executable)] + arguments).returncode
         if label == 'qa-persistent':
             status |= subprocess.run([str(executable), '--no-ui-tests']).returncode
+            status |= subprocess.run([str(executable), '--settings-lookup-tests'], timeout=15).returncode
             env = dict(os.environ, PARROT_TEST_FAKE_STORE=str(temp / 'synthetic-security-boundary.json'))
             for phase in ['write', 'read']:
                 status |= subprocess.run([str(executable), '--persistence-phase', phase], env=env).returncode
