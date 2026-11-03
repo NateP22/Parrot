@@ -54,6 +54,9 @@ for name in ("strictAnswerKind", "evidenceItems", "strictPrompt", "strictAnswerC
     subject += block(provider, "    static func " + name + "(") + "\n"
 subject += block(provider, "    private static func checkFirstDraft(") + "\n"
 subject += block(provider, "    private struct MessagesResponse:") + "\n}\n"
+knowledge = (root / "Parrot/Services/KnowledgeBaseService.swift").read_text()
+subject += "\n@MainActor enum ActualKBChunker {\n"
+subject += block(knowledge, "    nonisolated static func chunkText(") + "\n}\n"
 
 main = r'''
 import Foundation
@@ -186,6 +189,52 @@ do {
     check("local citation retains original UTF8 bytes", req.references.first?.text == sourceText)
     let followup = request(snap, question: "How do I do that?", refs: req.references).preparingReviewedFacts()
     check("generic followup may nominate an exact retrieved fact quote", followup.reviewedFactContext?.isEmpty == false)
+    // Exercise the real importer boundary: heading glue changes whitespace,
+    // while signed evidence and the resulting citation must retain exact bytes.
+    let headedText = "# Atlas references\n\n" + sourceText
+    func headedSource(_ id: String) -> C.Source {
+        C.Source(id: id, name: s.name, provider: s.provider, authority: s.authority,
+            revision: s.revision, productVersion: s.productVersion, urls: s.urls,
+            sha256: C.sha256(Data(headedText.utf8)), text: headedText)
+    }
+    let hs = headedSource("s-" + headedSource("").identityDigest)
+    var headedFact = fact
+    headedFact["sourceSHA256"] = hs.sha256
+    headedFact["evidence"] = try object(C.Evidence(sourceID: hs.id, startUTF8: 0,
+        endUTF8: headedText.utf8.count, quote: headedText))
+    let hf = try JSONDecoder().decode(C.Fact.self, from: JSONSerialization.data(withJSONObject: headedFact))
+    headedFact["id"] = "f-" + hf.contentDigest.prefix(24)
+    var hr = headedFact["review"] as! [String: Any]
+    hr["digest"] = hf.contentDigest; headedFact["review"] = hr
+    var hp = payload; hp["sources"] = [try object(hs)]; hp["facts"] = [headedFact]
+    let headedCatalog = try C.decode(envelope(hp))
+    let headedDoc = KBDocument(name: hs.name, chunkCount: 1, addedAt: Date(), contentSHA256: hs.sha256)
+    let headedSnap = headedCatalog.admitted(documents: [headedDoc], folders: [], profileID: nil)
+    let actualChunks = ActualKBChunker.chunkText(headedText)
+    check("actual chunker glues heading with one newline", actualChunks == ["# Atlas references\n" + sourceText])
+    let chunk = actualChunks.first ?? ""
+    func headedFollowup(_ text: String, name: String? = nil,
+                        question: String = "How do I do that?") -> AnalysisRequest {
+        request(headedSnap, question: question,
+            refs: [KBReference(documentName: name ?? hs.name, note: nil, text: text)]).preparingReviewedFacts()
+    }
+    let chunkFollowup = headedFollowup(chunk)
+    check("actual chunk nominates signed fact despite heading whitespace", chunkFollowup.reviewedFactContext?.isEmpty == false)
+    check("chunk nomination preserves original quote and content digest",
+        chunkFollowup.references.first?.text == headedText
+        && chunkFollowup.reviewedFactContext?.citations.first?.factDigest == hf.contentDigest)
+    check("Unicode whitespace-only retrieval cannot nominate", headedFollowup(" \t\n\u{00a0}").reviewedFactContext?.isEmpty == true)
+    check("empty retrieval cannot nominate", headedFollowup("").reviewedFactContext?.isEmpty == true)
+    check("wrong document name cannot nominate", headedFollowup(chunk, name: "Different Atlas.md").reviewedFactContext?.isEmpty == true)
+    check("retrieval cannot override explicit other version", headedFollowup(chunk,
+        question: "How do I do that in 4.2.1?").reviewedFactContext?.isEmpty == true)
+    for (label, changed) in [
+        ("case", chunk.uppercased()),
+        ("punctuation", chunk.replacingOccurrences(of: "# Atlas references", with: "# Atlas references!")),
+        ("negation", chunk.replacingOccurrences(of: "supports", with: "does not support")),
+    ] {
+        check("retrieved " + label + " change is not whitespace equivalence", headedFollowup(changed).reviewedFactContext?.isEmpty == true)
+    }
     check("unresolved followup without retrieved evidence stays empty", request(snap, question: "How do I do that?").preparingReviewedFacts().reviewedFactContext?.isEmpty == true)
     let irrelevant = request(snap, question: "What is the weather tomorrow?",
         refs: [KBReference(documentName: s.name, note: nil, text: "Unrelated weather passage.")]).preparingReviewedFacts()
