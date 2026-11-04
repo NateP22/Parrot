@@ -824,6 +824,7 @@ final class CallAnalysisEngine {
         // A strict profile or a required reviewed library must use the whole,
         // reviewed-answer path, including when that library is unavailable.
         guard activeProfile?.allowGeneralKnowledge != false,
+              knowledgeBase?.repositoryRevision == nil,
               knowledgeBase?.reviewedAnswerSnapshot(for: activeProfile?.id) == nil else { return false }
         return docMatcher?.isConfigured == true
             && !CloudGate.forcesLocal && !forceLocal

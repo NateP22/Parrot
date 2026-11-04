@@ -255,7 +255,7 @@ enum ProfilePolicyTests {
 
     @MainActor
     private static func testExcerptRouting(_ check: (String, Bool) -> Void) {
-        for mode in ["strict profile", "required catalog", "permissive control"] {
+        for mode in ["strict profile", "required catalog", "repository source", "permissive control"] {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.protocolClasses = [ExcerptProtocol.self]
             configuration.httpAdditionalHeaders = ["X-Parrot-Fixture": ExcerptProtocol.reset(gated: false)]
@@ -269,6 +269,12 @@ enum ProfilePolicyTests {
             if mode == "required catalog" {
                 do { try kb.installReviewedCatalog(ReviewedAnswerTests.fixtureData) }
                 catch { check("excerpt routing: signed synthetic fixture installs", false) }
+            }
+            if mode == "repository source" {
+                do {
+                    try kb.installRepositorySource(RepositoryKnowledgeTests.fixture())
+                    current.repositoryRuntimeScopeID = "desktop"
+                } catch { check("excerpt routing: scoped fictional source installs", false) }
             }
             engine.knowledgeBase = kb
             engine.docMatcher = JevDocMatcher(apiKey: "synthetic-test-key", session: session)
