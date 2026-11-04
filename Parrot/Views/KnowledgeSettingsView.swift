@@ -10,10 +10,24 @@ struct KnowledgeSettingsView: View {
     @Query(sort: \CallProfile.sortOrder) private var profiles: [CallProfile]
     @State private var search = ""
     @State private var importing = false
-    @State private var importingRepository = false
+    private enum ImportDestination {
+        case repository
+        case documents(UUID?)
+
+        var contentTypes: [UTType] {
+            switch self {
+            case .repository: [.data]
+            case .documents: [.pdf, .plainText, .text, .json]
+            }
+        }
+
+        var allowsMultipleSelection: Bool {
+            if case .documents = self { return true }
+            return false
+        }
+    }
+    @State private var importDestination: ImportDestination = .documents(nil)
     @State private var repositoryImportError: String?
-    /// The folder the file picker adds into (nil = No folder).
-    @State private var importFolder: UUID?
     @State private var deleting: KBFolder?
     @State private var renamingID: UUID?
     @State private var renameText = ""
@@ -31,7 +45,10 @@ struct KnowledgeSettingsView: View {
                     VStack(alignment: .leading, spacing: Theme.Metrics.controlGap) {
                         Text(kb.repositoryStatus ?? "No repository snapshot imported.")
                             .font(Theme.Typography.secondary)
-                        Button("Import code snapshot…") { importingRepository = true }
+                        Button("Import code snapshot…") {
+                            importDestination = .repository
+                            importing = true
+                        }
                             .disabled(kb.repositoryLoading)
                         if let error = repositoryImportError {
                             Text(error).font(Theme.Typography.secondary).foregroundStyle(Theme.Colors.warn)
@@ -73,26 +90,31 @@ struct KnowledgeSettingsView: View {
                 }
             }
         }
-        .fileImporter(
-            isPresented: $importingRepository,
-            allowedContentTypes: [.data], allowsMultipleSelection: false
-        ) { result in
-            Task {
-                do {
-                    guard let url = try result.get().first else { return }
-                    try await kb.importRepositorySource(at: url)
-                    repositoryImportError = nil
-                } catch { repositoryImportError = error.localizedDescription }
-            }
-        }
+        // One presenter owns both routes. Two fileImporter modifiers on this
+        // view left the code button without a sheet on the actual Mac app.
         .fileImporter(
             isPresented: $importing,
-            allowedContentTypes: [.pdf, .plainText, .text, .json],
-            allowsMultipleSelection: true
+            allowedContentTypes: importDestination.contentTypes,
+            allowsMultipleSelection: importDestination.allowsMultipleSelection
         ) { result in
-            if case .success(let urls) = result {
-                let folder = importFolder
-                Task { await kb.addDocuments(at: urls, into: folder) }
+            let destination = importDestination
+            Task {
+                do {
+                    let urls = try result.get()
+                    switch destination {
+                    case .repository:
+                        guard let url = urls.first else { return }
+                        try await kb.importRepositorySource(at: url)
+                        repositoryImportError = nil
+                    case .documents(let folder):
+                        await kb.addDocuments(at: urls, into: folder)
+                    }
+                } catch {
+                    if case .repository = destination,
+                       (error as NSError).code != NSUserCancelledError {
+                        repositoryImportError = error.localizedDescription
+                    }
+                }
             }
         }
         .confirmationDialog(
@@ -116,7 +138,7 @@ struct KnowledgeSettingsView: View {
                 renamingID = folder.id
             }
             Button("Add documents…") {
-                importFolder = nil
+                importDestination = .documents(nil)
                 importing = true
             }
         }
@@ -188,7 +210,7 @@ struct KnowledgeSettingsView: View {
                             renamingID = folder.id
                         }
                         Button("Add documents here…") {
-                            importFolder = folder.id
+                            importDestination = .documents(folder.id)
                             importing = true
                         }
                         Divider()
