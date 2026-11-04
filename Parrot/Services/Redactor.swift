@@ -136,12 +136,20 @@ extension Redactor {
         if r.usesReviewedFacts && r.reviewedFactContext == nil {
             return redact(r.preparingReviewedFacts())
         }
+        // Stable code is redacted first so a changing conversation cannot
+        // renumber its placeholders and accidentally change the cached prefix.
+        // Ordinary document request ordering stays unchanged.
+        let sourceFirst = r.usesRepository ? r.references.map {
+            KBReference(documentName: $0.documentName, note: $0.note, text: redact($0.text),
+                repositoryCitation: $0.repositoryCitation, repositoryContextRole: $0.repositoryContextRole)
+        } : nil
         var copy = AnalysisRequest(
             transcript: redact(r.transcript),
             currentQuestion: r.currentQuestion.map { redact($0) },
             knownInsightTitles: r.knownInsightTitles.map { redact($0) },
-            references: r.references.map { KBReference(documentName: $0.documentName, note: $0.note,
-                                                       text: redact($0.text), repositoryCitation: $0.repositoryCitation) },
+            references: sourceFirst ?? r.references.map { KBReference(documentName: $0.documentName, note: $0.note,
+                                                       text: redact($0.text), repositoryCitation: $0.repositoryCitation,
+                                                       repositoryContextRole: $0.repositoryContextRole) },
             instructions: r.instructions,
             callBrief: redact(r.callBrief),
             allowGeneralKnowledge: r.allowGeneralKnowledge,
@@ -183,6 +191,7 @@ extension Redactor {
         func same(_ a: KBReference, _ b: KBReference) -> Bool {
             a.documentName == b.documentName && a.note == b.note && a.text == b.text
                 && a.repositoryCitation == b.repositoryCitation
+                && a.repositoryContextRole == b.repositoryContextRole
         }
         var restored: [KBReference] = []
         var indices: [Int] = []

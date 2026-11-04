@@ -5,6 +5,10 @@ struct AITokenTotals: Codable, Equatable {
     var inputTokens = 0
     var outputTokens = 0
     var calls = 0
+    /// Raw provider counters, not proof of warm readiness or a price estimate.
+    /// Optional keeps pre-cache usage records backward compatible.
+    var cacheCreationInputTokens: Int? = nil
+    var cacheReadInputTokens: Int? = nil
 }
 
 /// Estimated pricing constants. Copilot rates verified against the claude-api

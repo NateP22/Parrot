@@ -165,4 +165,7 @@ struct KBReference {
     let note: String?
     let text: String
     var repositoryCitation: RepositoryCitation? = nil
+    /// App-owned retrieval role; complete modules/related declarations/loaders form a stable
+    /// cache prefix. UI and bounded declarations vary with the question.
+    var repositoryContextRole: String? = nil
 }

@@ -178,6 +178,7 @@ struct RepositoryKnowledge: Codable {
     struct Passage {
         let text: String
         let citation: RepositoryCitation
+        var contextRole: String? = nil
         var searchText: String { citation.path + "\n" + text }
     }
 

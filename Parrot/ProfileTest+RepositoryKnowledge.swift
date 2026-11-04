@@ -110,7 +110,8 @@ enum RepositoryKnowledgeTests {
         }
         check("repository: returned answer has canonical code citation", answer?.repositoryCitations == [refs[0].repositoryCitation!])
         check("repository: returned original evidence restored", answer?.evidenceQuote == refs[0].text)
-        check("repository: no fake model citation", answer?.repositoryCitations?.first?.url.fragment?.hasPrefix("L1-L") == true)
+        check("repository: no fake model citation", answer?.repositoryCitations?.first?.url.absoluteString ==
+            "https://github.com/fictional/atlas/blob/" + String(repeating: "a", count: 40) + "/host/pageLinks.js#L2-L5")
 
         for text in [Optional<String>.none, "", "   "] {
             var ambient = request; ambient.currentQuestion = text
@@ -131,6 +132,49 @@ enum RepositoryKnowledgeTests {
         set("custom", forKey: "copilotProvider")
         let unsupported = try await switching.analyze(request)
         check("repository: unsupported backend fails closed", unsupported.insights.first?.source == nil && RepositoryFixtureProtocol.bodies.count == count)
+
+        // Actual KB publication/search and actual redaction/prefix builders.
+        // Fictional source only; no provider/model or name-tagger invocation.
+        let moduleKB = KnowledgeBaseService(persistent: false)
+        let originalModule = "var Atlas={};\nAtlas.draw = function(v) { return Guard.allow(v); };\n"
+            + String(repeating: "// original context\n", count: 80)
+            + "Atlas.exception = function(v) { if (v.privateMode) return false; return true; }; // atlas@fictional.example\n"
+        let moduleFiles = [("desktop/loader.js", "function boot(root) { var modules=['draw.js','guard.js']; for(var i=0;i<modules.length;i++) { var item=new File(root+'/' + modules[i]); if(item.exists) $.evalFile(item); } }\n"),
+            ("desktop/draw.js", originalModule),
+            ("desktop/guard.js", "var Guard={};\nGuard.allow = function(v) { if (!v.ready) return false; return v.allowed; };\n")]
+        func modulePacket(_ commit: String) throws -> Data {
+            try JSONEncoder().encode(RepositoryKnowledge(schemaVersion: 1, repository: "fictional/atlas", requestedRef: "main", commit: commit,
+                files: moduleFiles.map { path, text in .init(path: path, blob: RepositoryKnowledge.gitBlob(Data(text.utf8)), sha256: RepositoryKnowledge.digest(Data(text.utf8)), text: text) },
+                runtimeScopes: [.init(id: "desktop", name: "Desktop", roots: ["desktop/"], entryPoints: ["desktop/loader.js"], dependencyRoots: [])]))
+        }
+        try moduleKB.installRepositorySource(modulePacket(String(repeating: "c", count: 40)))
+        let modules = await moduleKB.search(query: "Atlas draw", runtimeScopeID: "desktop", topK: 6)
+        check("repository module: actual KB keeps far-away exception", modules.contains { $0.text == originalModule && $0.repositoryContextRole == "module" })
+        check("repository module: actual KB retains loader evidence", modules.contains { $0.repositoryContextRole == "loader" && $0.text.contains("item.exists") })
+        var codeRequest = request
+        codeRequest.references = modules
+        codeRequest.knownDocumentNames = modules.map(\.documentName)
+        codeRequest.repositoryRevision = moduleKB.repositoryRevision
+        codeRequest.transcript = "Them: Other contact first@fictional.example. Can I draw?"
+        codeRequest.currentQuestion = "Can I draw?"
+        func prefixBytes(_ request: AnalysisRequest) throws -> Data {
+            var privacy = Redactor(hideNames: false)
+            let redacted = privacy.redact(request)
+            check("repository module: redaction preserves app-owned roles", redacted.references.map(\.repositoryContextRole) == request.references.map(\.repositoryContextRole))
+            let messages = try ClaudeAnalysisProvider.strictAnswerMessages(redacted)
+            let blocks = messages[0]["content"] as! [[String: Any]]
+            return try JSONSerialization.data(withJSONObject: blocks[0], options: [.sortedKeys])
+        }
+        let firstPrefix = try prefixBytes(codeRequest)
+        codeRequest.transcript = "Them: Different contact second@fictional.example. What if not ready?"
+        codeRequest.currentQuestion = "What if not ready?"
+        check("repository module: actual redaction retains exact cached bytes across questions", try prefixBytes(codeRequest) == firstPrefix)
+        let moduleRevision = moduleKB.repositoryRevision
+        try moduleKB.installRepositorySource(modulePacket(String(repeating: "d", count: 40)))
+        let replaced = await moduleKB.search(query: "Atlas draw", runtimeScopeID: "desktop", topK: 6)
+        check("repository module: replacement atomically invalidates source refs", moduleKB.repositoryRevision != moduleRevision && replaced.allSatisfy { $0.repositoryCitation?.commit == String(repeating: "d", count: 40) })
+        codeRequest.references = replaced; codeRequest.repositoryRevision = moduleKB.repositoryRevision
+        check("repository module: changed source invalidates cached prefix", try prefixBytes(codeRequest) != firstPrefix)
 
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("parrot-code-test-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -233,7 +277,7 @@ private final class RepositoryFixtureProtocol: URLProtocol {
         let value: [String: Any] = review
             ? ["supported": true, "answers_question": true, "preserves_conditions": true, "clear_and_sayable": true,
                "missing_conditions": [], "unclear_terms": [], "evidence_ids": ["p0"]]
-            : ["reply": "Turn off page links.", "evidence_ids": ["p0"]]
+            : ["reply": "Turn off page links.", "evidence_ids": ["p0"], "source": "https://untrusted.example/fake#L1-L999"]
         let bytes = ReviewedTransportTests.envelope(value)
         let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)

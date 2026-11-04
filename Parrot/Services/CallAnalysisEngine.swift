@@ -482,9 +482,10 @@ final class CallAnalysisEngine {
                 let strict = !requestedGeneralKnowledge
                 let query = requestedRepositoryRevision == nil ? question
                     : Self.repositoryRetrievalQuery(question: question, recent: recent.map(\.text))
+                let referenceLimit = requestedRepositoryRevision != nil ? 32 : (strict ? 12 : 2)
                 references = await kb.search(query: query, profileID: requestedProfileID,
                     runtimeScopeID: requestedRuntimeScopeID,
-                    topK: strict ? 12 : 2, contextNeighbors: strict ? 1 : 0)
+                    topK: referenceLimit, contextNeighbors: strict ? 1 : 0)
                 guard isActive, !Task.isCancelled else { return }
             }
             let windowQuery = recent.map(\.text).joined(separator: " ")

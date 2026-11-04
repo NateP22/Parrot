@@ -89,6 +89,24 @@ enum RepositoryCodeIndexTest {
         check("declaration preparation has a per-file bound", many.declarations.count == 256)
         let markup = try single("function Component(value) {\n  return <div>{value.label}</div>;\n}\n")
         check("mixed JSX is not claimed as parsed declarations", markup.declarations.isEmpty)
+        let namespaced = try single("function renderLabel(value) { return Atlas.resolve(value); }\nAtlas.resolve = function(value) { if (!value.ready) return null; return value.label; };\nOther.resolve = function(value) { return 'wrong runtime'; };\n")
+        let namespaceSpans = namespaced.expanded(seedIndices: [0], scopeID: "desktop")
+        check("qualified calls do not collapse unrelated object methods", namespaceSpans.contains { $0.text.contains("Atlas.resolve =") } && !namespaceSpans.contains { $0.text.contains("Other.resolve =") })
+        for annotation in ["Promise<{review: string; section: string}>", "{review: string; section: string}"] {
+            let text = "function copyReview(input): \(annotation) {\n if (!input.ready) throw Error('not ready');\n if (input.privateMode) return null;\n return input;\n}\n"
+            let typed = try single(text)
+            check("inline object return type cannot replace executable body", typed.declarationInventory.count == 1 && typed.declarationInventory[0].endLine == 5 && typed.passage(file: 0, start: typed.declarationInventory[0].startLine, end: typed.declarationInventory[0].endLine).text == text)
+        }
+        let ambiguousType = try single("function uncertain(input): Input extends Other ? {ok: boolean} : {no: boolean} {\n if (!input.ready) return false;\n return true;\n}\n")
+        check("unsupported conditional return annotation never claims header-only body", ambiguousType.declarationInventory.isEmpty && ambiguousType.fileCoverage[0]?.reasons.contains("unsupported-function-header") == true)
+        let definitionScope = try single("var Atlas={};\nAtlas.draw=function(Atlas){return Atlas.local();};\nfunction other(Atlas){return Atlas.other();}\n")
+        check("definition namespace precedes own parameter scope while call is shadowed", definitionScope.declarationInventory.first?.definitionBindings.contains("Atlas") == false && definitionScope.declarationInventory.first?.localBindings.contains("Atlas") == true)
+        for (text, reason) in [("const guard = (v) => { if (v.blocked) return false; return v.ready; };\n", "unsupported-arrow-function"), ("var Guard={ allow(v){if(v.blocked)return false;return v.ready;} };\n", "unsupported-concise-method-syntax"), ("class Guard { allow(v){return !v.blocked;} }\n", "unsupported-class-method-syntax"), ("const Guard=class { static allow(v){return !v.blocked;} };\n", "unsupported-class-method-syntax")] {
+            let unsupported = try single(text)
+            check("unsupported executable form marks bounded inventory honestly", unsupported.fileCoverage[0]?.declarationInventoryComplete == false && unsupported.fileCoverage[0]?.reasons.contains(reason) == true)
+        }
+        let syntaxLiteral = try single("function literal(){ const text='=> class Fake { concise(){} }'; /* () => {} */ return true; }\n")
+        check("comments/strings do not create unsupported syntax coverage flags", syntaxLiteral.fileCoverage[0]?.declarationInventoryComplete == true)
         print("\(checks) checks; \(failures) failures; fictional source only; no native/model acceptance")
         if failures > 0 { exit(1) }
     }

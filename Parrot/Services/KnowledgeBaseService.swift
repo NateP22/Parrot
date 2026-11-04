@@ -28,6 +28,7 @@ final class KnowledgeBaseService {
     private var repositoryPassages: [RepositoryKnowledge.Passage] = []
     private var repositoryTerms: [[String]] = []
     private var repositoryCodeIndex: RepositoryCodeIndex?
+    private var repositoryModuleContext: RepositoryModuleContext?
     private var repositoryContentRevision: String?
     private(set) var repositoryLoading = false
     private var repositoryWorkToken = UUID()
@@ -54,7 +55,7 @@ final class KnowledgeBaseService {
         guard let scopeID, scopes.contains(where: { $0.id == scopeID }) else {
             return "Choose the product runtime in Settings → Profiles before answering from code."
         }
-        return nil
+        return repositoryModuleContext?.issue(for: scopeID)
     }
 
     var isEmpty: Bool { documents.isEmpty && !repositoryConfigured }
@@ -453,15 +454,17 @@ final class KnowledgeBaseService {
         let passages: [RepositoryKnowledge.Passage]
         let terms: [[String]]
         let codeIndex: RepositoryCodeIndex
+        let moduleContext: RepositoryModuleContext
     }
 
     private nonisolated static func prepareRepository(_ data: Data) throws -> PreparedRepository {
         let source = try RepositoryKnowledge.decode(data)
         let passages = source.passages()
         guard !passages.isEmpty else { throw RepositoryKnowledge.Failure.invalid("empty index") }
+        let codeIndex = RepositoryCodeIndex(source: source, passages: passages)
         return PreparedRepository(source: source, passages: passages,
             terms: passages.map { lexicalTokens(RepositoryKnowledge.tokens($0.searchText).joined(separator: " ")) },
-            codeIndex: RepositoryCodeIndex(source: source, passages: passages))
+            codeIndex: codeIndex, moduleContext: RepositoryModuleContext(index: codeIndex))
     }
 
     private nonisolated static func readPreparedRepository(at url: URL) throws -> (data: Data, index: PreparedRepository) {
@@ -484,6 +487,7 @@ final class KnowledgeBaseService {
         repositorySource = index.source
         repositoryPassages = index.passages
         repositoryCodeIndex = index.codeIndex
+        repositoryModuleContext = index.moduleContext
         repositoryTerms = index.terms
         repositoryContentRevision = index.source.revision
         repositoryConfigured = true
@@ -535,20 +539,21 @@ final class KnowledgeBaseService {
     }
 
     private func searchRepository(query: String, scopeID: String?, topK: Int) async -> [KBReference] {
-        guard let index = repositoryCodeIndex else { return [] }
+        guard let index = repositoryCodeIndex, let moduleContext = repositoryModuleContext else { return [] }
         let terms = repositoryTerms
         let selected = await Task.detached(priority: .userInitiated) {
             let candidates = index.primaryPassageIndices(scopeID: scopeID)
             let order = Self.bm25Order(query: Self.lexicalTokens(RepositoryKnowledge.tokens(query).joined(separator: " ")),
                 documents: candidates.map { terms[$0] })
-            return index.expanded(seedIndices: order.map { candidates[$0] }, scopeID: scopeID, limit: min(6, max(0, topK)))
+            return moduleContext.select(seeds: order.map { candidates[$0] }, scopeID: scopeID, limit: min(32, max(0, topK)))
         }.value
-        return selected.map { passage in
+        guard repositorySource?.revision == index.source.revision else { return [] }
+        return selected.passages.map { passage in
             let primary = index.source.runtimeScopes?.first(where: { $0.id == scopeID })?.contains(passage.citation.path) == true
             return KBReference(documentName: passage.citation.sourceName,
-                note: primary ? "Selected runtime source; navigation hints do not prove execution."
+                note: primary ? selected.note
                     : "Explicit dependency source, not the selected runtime implementation.",
-                text: passage.text, repositoryCitation: passage.citation)
+                text: passage.text, repositoryCitation: passage.citation, repositoryContextRole: passage.contextRole)
         }
     }
 

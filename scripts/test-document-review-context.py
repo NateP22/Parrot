@@ -23,8 +23,8 @@ prompt_start = source.index("    static let evidenceReviewPrompt = \"\"\"")
 prompt_end = source.index('\n        """', prompt_start) + len('\n        """')
 subject = r'''
 import Foundation
-struct RepositoryCitation { let commit: String; let path: String; let startLine: Int; let endLine: Int }
-struct KBReference { let documentName: String; let text: String; var repositoryCitation: RepositoryCitation? = nil; var note: String? = nil }
+struct RepositoryCitation { let commit: String; let path: String; let startLine: Int; let endLine: Int; var revision = "fictional-revision" }
+struct KBReference { let documentName: String; let text: String; var repositoryCitation: RepositoryCitation? = nil; var note: String? = nil; var repositoryContextRole: String? = nil }
 struct InsightDraft { let reply: String?; let source: String? }
 struct AnalysisRequest {
     let transcript: String
@@ -43,7 +43,7 @@ final class Subject {
     var throwTimeout = false
     var throwCancellation = false
     func performRequest(body: [String: Any], apiKey: String,
-                        timeout: TimeInterval, retryTransient: Bool) async throws -> Data {
+                        timeout: TimeInterval, retryTransient: Bool, repositoryContext: Bool = false) async throws -> Data {
         bodies.append(body)
         if throwCancellation { throw CancellationError() }
         if throwTimeout { throw URLError(.timedOut) }
@@ -64,7 +64,7 @@ subject += "\n" + "\n".join([
     source[prompt_start:prompt_end],
     method("    static func evidenceReviewBody("),
     method("    private func reviewAnswer("),
-]) + "\n}\n"
+]) + "\n}\n" + (root / "Parrot/Services/RepositoryPromptCache.swift").read_text()
 main = r'''
 import Foundation
 var checks = 0
