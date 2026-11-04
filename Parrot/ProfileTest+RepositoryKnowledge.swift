@@ -151,12 +151,15 @@ enum RepositoryKnowledgeTests {
         let modules = await moduleKB.search(query: "Atlas draw", runtimeScopeID: "desktop", topK: 6)
         check("repository module: actual KB keeps far-away exception", modules.contains { $0.text == originalModule && $0.repositoryContextRole == "module" })
         check("repository module: actual KB retains loader evidence", modules.contains { $0.repositoryContextRole == "loader" && $0.text.contains("item.exists") })
-        var codeRequest = request
-        codeRequest.references = modules
-        codeRequest.knownDocumentNames = modules.map(\.documentName)
-        codeRequest.repositoryRevision = moduleKB.repositoryRevision
-        codeRequest.transcript = "Them: Other contact first@fictional.example. Can I draw?"
-        codeRequest.currentQuestion = "Can I draw?"
+        func moduleRequest(transcript: String, question: String, references: [KBReference]) -> AnalysisRequest {
+            AnalysisRequest(transcript: transcript, currentQuestion: question, knownInsightTitles: [],
+                references: references, instructions: "", callBrief: "", allowGeneralKnowledge: false,
+                knownDocumentNames: references.map(\.documentName), persona: "", counterpart: "client",
+                kinds: request.kinds, gauges: [], repositoryRevision: moduleKB.repositoryRevision,
+                repositoryRuntimeScopeID: "desktop")
+        }
+        let codeRequest = moduleRequest(transcript: "Them: Other contact first@fictional.example. Can I draw?",
+            question: "Can I draw?", references: modules)
         func prefixBytes(_ request: AnalysisRequest) throws -> Data {
             var privacy = Redactor(hideNames: false)
             let redacted = privacy.redact(request)
@@ -166,15 +169,16 @@ enum RepositoryKnowledgeTests {
             return try JSONSerialization.data(withJSONObject: blocks[0], options: [.sortedKeys])
         }
         let firstPrefix = try prefixBytes(codeRequest)
-        codeRequest.transcript = "Them: Different contact second@fictional.example. What if not ready?"
-        codeRequest.currentQuestion = "What if not ready?"
-        check("repository module: actual redaction retains exact cached bytes across questions", try prefixBytes(codeRequest) == firstPrefix)
+        let followupCodeRequest = moduleRequest(transcript: "Them: Different contact second@fictional.example. What if not ready?",
+            question: "What if not ready?", references: modules)
+        check("repository module: actual redaction retains exact cached bytes across questions", try prefixBytes(followupCodeRequest) == firstPrefix)
         let moduleRevision = moduleKB.repositoryRevision
         try moduleKB.installRepositorySource(modulePacket(String(repeating: "d", count: 40)))
         let replaced = await moduleKB.search(query: "Atlas draw", runtimeScopeID: "desktop", topK: 6)
         check("repository module: replacement atomically invalidates source refs", moduleKB.repositoryRevision != moduleRevision && replaced.allSatisfy { $0.repositoryCitation?.commit == String(repeating: "d", count: 40) })
-        codeRequest.references = replaced; codeRequest.repositoryRevision = moduleKB.repositoryRevision
-        check("repository module: changed source invalidates cached prefix", try prefixBytes(codeRequest) != firstPrefix)
+        let replacedCodeRequest = moduleRequest(transcript: followupCodeRequest.transcript,
+            question: followupCodeRequest.currentQuestion!, references: replaced)
+        check("repository module: changed source invalidates cached prefix", try prefixBytes(replacedCodeRequest) != firstPrefix)
 
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("parrot-code-test-" + UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: folder) }
