@@ -21,13 +21,16 @@ enum RepositoryKnowledgeTests {
     static func fixture() throws -> Data {
         let values = [("client/settings.json", "{\"includeLinks\":false}\n"),
                       ("host/settings.json", "{\"includeLinks\":true}\n"),
-                      ("host/pageLinks.js", "// Fictional Atlas\nfunction pageLinks(enabled) {\n  if (!enabled) return [];\n  return links;\n}\n// Contact atlas@fictional.example\n")]
+                      ("host/pageLinks.js", "// Fictional Atlas\nfunction pageLinks(enabled) {\n  if (!enabled) return [];\n  return links;\n}\n// Contact atlas@fictional.example\n"),
+                      ("server/pageLinks.js", "function pageLinks() { return links; }\n")]
         return try JSONEncoder().encode(RepositoryKnowledge(schemaVersion: 1,
             repository: "fictional/atlas", requestedRef: "main", commit: String(repeating: "a", count: 40),
             files: values.map { path, text in
                 .init(path: path, blob: RepositoryKnowledge.gitBlob(Data(text.utf8)),
                       sha256: RepositoryKnowledge.digest(Data(text.utf8)), text: text)
-            }))
+            }, runtimeScopes: [.init(id: "desktop", name: "Desktop", roots: ["host/", "client/"],
+                entryPoints: ["host/pageLinks.js"], dependencyRoots: []),
+                .init(id: "web", name: "Web", roots: ["server/"], entryPoints: ["server/pageLinks.js"], dependencyRoots: [])]))
     }
 
     @MainActor
@@ -47,10 +50,14 @@ enum RepositoryKnowledgeTests {
         check("repository: trace rejects arbitrary source strings", trace.link(context: context,
             profileID: nil, catalogRevisionToken: nil, repositoryRevision: "untrusted file path") == nil)
         check("repository: explicit import bypasses catalog", kb.reviewedAnswerSnapshot(for: nil) == nil)
-        let refs = await kb.search(query: "page links enabled", topK: 6)
+        let noScope = await kb.search(query: "page links enabled", topK: 6)
+        check("repository: missing runtime cannot use secondary documents or guess", noScope.isEmpty && kb.repositoryScopeIssue(for: nil) != nil)
+        let unknownScope = await kb.search(query: "page links enabled", runtimeScopeID: "missing", topK: 6)
+        check("repository: unknown runtime fails closed", unknownScope.isEmpty)
+        let refs = await kb.search(query: "page links enabled", runtimeScopeID: "desktop", topK: 6)
         let followup = CallAnalysisEngine.repositoryRetrievalQuery(question: "How do I do that?",
             recent: ["I want page links disabled.", "How do I do that?"])
-        let followupRefs = await kb.search(query: followup, topK: 6)
+        let followupRefs = await kb.search(query: followup, runtimeScopeID: "desktop", topK: 6)
         check("repository: follow-up retains implementation referent", followupRefs.first?.repositoryCitation?.path == "host/pageLinks.js")
         check("repository: actual code retrieval", refs.first?.repositoryCitation?.path == "host/pageLinks.js")
         check("repository: JSON distinct paths in source inventory", kb.documentsInPlay(for: nil).contains("fictional/atlas/client/settings.json") && kb.documentsInPlay(for: nil).contains("fictional/atlas/host/settings.json"))
@@ -64,7 +71,7 @@ enum RepositoryKnowledgeTests {
             persona: "", counterpart: "client", kinds: [ProfileKind(id: UUID(), key: "suggestion",
                 label: "Suggestion", colorHex: "808080", iconSystemName: "doc",
                 triggerDescription: "Answer the question", isPinned: false, priority: 1)],
-            gauges: [], repositoryRevision: revision)
+            gauges: [], repositoryRevision: revision, repositoryRuntimeScopeID: "desktop")
         request.reviewedCatalog = try ReviewedAnswerCatalog.decode(ReviewedAnswerTests.fixtureData)
             .admitted(documents: [], folders: [], profileID: nil)
         request = request.preparingReviewedFacts()
@@ -72,6 +79,7 @@ enum RepositoryKnowledgeTests {
         var redactor = Redactor(hideNames: false)
         let redacted = redactor.redact(request)
         check("repository: redaction keeps source revision", redacted.repositoryRevision == revision)
+        check("repository: redaction keeps frozen runtime", redacted.repositoryRuntimeScopeID == "desktop")
         check("repository: redaction keeps typed provenance", redacted.references.first?.repositoryCitation == refs.first?.repositoryCitation)
         check("repository: redaction hides private strings", !redacted.transcript.contains("atlas@fictional.example"))
 
@@ -133,6 +141,8 @@ enum RepositoryKnowledgeTests {
         let loadDeadline = Date.now + 2
         while reopened.repositoryLoading && Date.now < loadDeadline { try await Task.sleep(nanoseconds: 1_000_000) }
         check("repository: source survives reopen", reopened.repositorySource?.commit == kb.repositorySource?.commit)
+        let reopenedReferences = await reopened.search(query: "page links enabled", runtimeScopeID: "desktop", topK: 6)
+        check("repository: runtime metadata and structural index survive reopen", reopened.repositoryScopeIssue(for: "desktop") == nil && reopenedReferences.contains { $0.text.contains("if (!enabled)") })
         try FileManager.default.removeItem(at: folder.appendingPathComponent("repository-source.parrotrepo"))
         let missing = KnowledgeBaseService(persistent: true, storageURL: index)
         let missingDeadline = Date.now + 2
@@ -165,12 +175,41 @@ enum RepositoryKnowledgeTests {
             let container = try ModelContainer(for: schema, configurations: [store])
             let context = ModelContext(container)
             context.insert(CallInsight(from: Insight(kindKey: "suggestion", title: "Code", detail: "LOCAL_CODE_ONLY", callTime: 0, source: citation.sourceName, reply: "Turn off page links.", repositoryCitations: [citation])))
+            let profile = CallProfile(name: "Runtime fixture", iconSystemName: "doc", summary: "",
+                isBuiltIn: false, sortOrder: 0, persona: "", tone: "", allowGeneralKnowledge: false,
+                kinds: request.kinds, gauges: [])
+            profile.repositoryRuntimeScopeID = "desktop"
+            context.insert(profile)
+            let exported = try ProfileFile.decode(ProfileFile.encode(profile))
+            check("repository profile: portable file preserves runtime", exported.profile.repositoryRuntimeScopeID == "desktop")
+            var cleared = exported; cleared.profile.repositoryRuntimeScopeID = nil
+            check("repository profile: clearing runtime survives raw-field preservation", try ProfileFile.decode(cleared.data()).profile.repositoryRuntimeScopeID == nil)
+            var oldJSON = try JSONSerialization.jsonObject(with: ProfileFile.encode(profile)) as! [String: Any]
+            var oldContents = oldJSON["profile"] as! [String: Any]
+            oldContents.removeValue(forKey: "repositoryRuntimeScopeID"); oldContents["futureField"] = "retained"
+            oldJSON["profile"] = oldContents
+            let oldFile = try ProfileFile.decode(JSONSerialization.data(withJSONObject: oldJSON))
+            check("repository profile: old portable file decodes to unselected runtime", oldFile.profile.repositoryRuntimeScopeID == nil)
+            check("repository profile: unrelated future fields preserved", String(decoding: oldFile.data(), as: UTF8.self).contains("futureField"))
+            let profiles = ProfileStore()
+            let copy = profiles.duplicate(profile, in: context)
+            check("repository profile: duplicate preserves runtime", copy.repositoryRuntimeScopeID == "desktop")
+            let imported = profiles.add(exported, source: "user", in: context)
+            check("repository profile: import preserves runtime", imported.repositoryRuntimeScopeID == "desktop")
+            profile.saveVersion(label: "Desktop")
+            let desktopVersion = profile.versions.last!
+            profiles.apply(cleared, to: profile, label: "Clear runtime", in: context)
+            check("repository profile: apply can clear runtime", profile.repositoryRuntimeScopeID == nil)
+            profiles.restore(desktopVersion, of: profile, in: context)
+            check("repository profile: restore preserves runtime", profile.repositoryRuntimeScopeID == "desktop")
             try context.save()
         }
         try autoreleasepool {
             let container = try ModelContainer(for: schema, configurations: [store])
             let rows = try ModelContext(container).fetch(FetchDescriptor<CallInsight>())
             check("repository: typed citations survive disk reopen", rows.first?.repositoryCitations == [citation])
+            let runtimeProfiles = try ModelContext(container).fetch(FetchDescriptor<CallProfile>())
+            check("repository profile: selected runtime persists on disk", runtimeProfiles.count == 3 && runtimeProfiles.allSatisfy { $0.repositoryRuntimeScopeID == "desktop" })
         }
         let receipt = ClaudeAnalysisProvider.reportInsightReceipt(kind: "suggestion", title: "Code", source: citation.sourceName, reply: "Turn off page links.", cardDetail: "LOCAL_CODE_ONLY", repositoryCitations: [citation])
         check("repository: report cites commit without exporting raw code", receipt.contains(citation.commit) && !receipt.contains("LOCAL_CODE_ONLY"))

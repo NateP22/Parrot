@@ -11,6 +11,26 @@ struct RepositoryKnowledge: Codable {
     let requestedRef: String
     let commit: String
     let files: [File]
+    /// Operator-selected runtime boundaries, not claims about deployed code.
+    /// Optional so existing snapshots remain readable; answering requires an
+    /// explicit, valid runtime selection rather than mixing all implementations.
+    var runtimeScopes: [RuntimeScope]? = nil
+
+    struct RuntimeScope: Codable, Equatable, Identifiable {
+        let id: String
+        let name: String
+        let roots: [String]
+        let entryPoints: [String]
+        let dependencyRoots: [String]
+
+        func contains(_ path: String) -> Bool { roots.contains { Self.matches(path, root: $0) } }
+        func permitsDependency(_ path: String) -> Bool {
+            contains(path) || dependencyRoots.contains { Self.matches(path, root: $0) }
+        }
+        private static func matches(_ path: String, root: String) -> Bool {
+            root.hasSuffix("/") ? path.hasPrefix(root) : path == root
+        }
+    }
 
     struct File: Codable {
         let path: String
@@ -27,7 +47,9 @@ struct RepositoryKnowledge: Codable {
     }
 
     static let maximumBytes = 24 * 1024 * 1024
-    static let maximumFileBytes = 512 * 1024
+    // Runtime entry files can exceed 1 MiB. Keep total inventory/package capped
+    // at 24 MiB and preserve the same whole-file secret/integrity checks.
+    static let maximumFileBytes = 2 * 1024 * 1024
 
     /// Allow runtime source/config only. Secret, build, dependency and test data
     /// never become question evidence. Docs use the separate secondary route.
@@ -82,6 +104,52 @@ struct RepositoryKnowledge: Codable {
             // file. No redaction that silently changes the cited blob is allowed.
             guard !containsCredential(file.text) else { throw Failure.invalid("credential material") }
         }
+        if let scopes = result.runtimeScopes {
+            guard !scopes.isEmpty, scopes.count <= 16 else { throw Failure.invalid("runtime scopes") }
+            var identities = Set<String>()
+            for scope in scopes {
+                guard scope.id.range(of: #"^[a-z][a-z0-9-]{0,63}$"#, options: .regularExpression) != nil,
+                      identities.insert(scope.id).inserted,
+                      !scope.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                      scope.name.utf8.count <= 120,
+                      !scope.name.unicodeScalars.contains(where: { $0.value < 32 }),
+                      !scope.roots.isEmpty, scope.roots.count <= 32,
+                      scope.dependencyRoots.count <= 32,
+                      !scope.entryPoints.isEmpty, scope.entryPoints.count <= 32 else {
+                    throw Failure.invalid("runtime scope identity or limits")
+                }
+                for root in scope.roots + scope.dependencyRoots {
+                    let components = root.components(separatedBy: "/")
+                    let parts = root.hasSuffix("/") ? Array(components.dropLast()) : components
+                    guard root.utf8.count <= 512, !parts.isEmpty,
+                          parts.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && !$0.contains("\\") && !$0.contains("*") }),
+                          !root.unicodeScalars.contains(where: { $0.value < 32 }),
+                          result.files.contains(where: { root.hasSuffix("/") ? $0.path.hasPrefix(root) : $0.path == root }) else {
+                        throw Failure.invalid("runtime scope root")
+                    }
+                }
+                guard Set(scope.roots).count == scope.roots.count,
+                      Set(scope.dependencyRoots).count == scope.dependencyRoots.count,
+                      Set(scope.entryPoints).count == scope.entryPoints.count,
+                      scope.entryPoints.allSatisfy({ entry in
+                          paths.contains(entry.lowercased()) && result.files.contains(where: { $0.path == entry }) && scope.contains(entry)
+                      }) else { throw Failure.invalid("runtime scope entry point") }
+            }
+            for file in result.files {
+                guard scopes.filter({ $0.contains(file.path) }).count <= 1 else {
+                    throw Failure.invalid("overlapping primary runtimes")
+                }
+            }
+            // Cross-runtime dependencies must be explicit original files, not
+            // an accidental wildcard/prefix import of another implementation.
+            for scope in scopes {
+                for root in scope.dependencyRoots where root.hasSuffix("/") {
+                    guard !result.files.contains(where: { file in
+                        file.path.hasPrefix(root) && scopes.contains(where: { $0.id != scope.id && $0.contains(file.path) })
+                    }) else { throw Failure.invalid("cross-runtime dependency must name exact files") }
+                }
+            }
+        }
         return result
     }
 
@@ -93,8 +161,18 @@ struct RepositoryKnowledge: Codable {
 
     /// Stable across JSON formatting, changes with the complete code inventory.
     var revision: String {
-        Self.digest(Data(([repository, commit] + files.sorted { $0.path < $1.path }
-            .map { $0.path + "\0" + $0.blob + "\0" + $0.sha256 }).joined(separator: "\n").utf8))
+        var pieces = [repository, commit] + files.sorted { $0.path < $1.path }
+            .map { $0.path + "\0" + $0.blob + "\0" + $0.sha256 }
+        if let scopes = runtimeScopes {
+            let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
+            let canonical = scopes.sorted { $0.id < $1.id }.map {
+                RuntimeScope(id: $0.id, name: $0.name, roots: $0.roots.sorted(),
+                    entryPoints: $0.entryPoints.sorted(), dependencyRoots: $0.dependencyRoots.sorted())
+            }
+            // These validated Codable values cannot fail JSON encoding.
+            pieces.append("runtime-scopes:" + Self.digest((try? encoder.encode(canonical)) ?? Data()))
+        }
+        return Self.digest(Data(pieces.joined(separator: "\n").utf8))
     }
 
     struct Passage {

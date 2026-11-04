@@ -80,6 +80,8 @@ struct AnalysisRequest {
     var answerTrace: AnswerTraceLink? = nil
     /// Captured before retrieval and checked again before visible delivery.
     var repositoryRevision: String? = nil
+    /// Frozen profile selection, checked after retrieval and before delivery.
+    var repositoryRuntimeScopeID: String? = nil
 
     var usesRepository: Bool { repositoryRevision != nil }
 
@@ -439,6 +441,8 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
                 item["path"] = code.path
                 item["start_line"] = code.startLine
                 item["end_line"] = code.endLine
+                if let scope = request.repositoryRuntimeScopeID { item["selected_runtime"] = scope }
+                if let note = $0.element.note { item["retrieval_note"] = note }
             } else if request.usesRepository {
                 item["evidence_kind"] = "secondary_document"
                 item["priority"] = 2
@@ -460,6 +464,10 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         essential context are missing, give a concrete uncertainty/check instead.
         Cite implementation passage IDs for implementation claims. Documents may
         support additional workflow facts when they do not contradict the code.
+        Use the selected_runtime only. Explicit dependency source can explain
+        a called service or helper, but does not substitute another runtime's
+        renderer or defaults. Declaration/call-spelling navigation hints are
+        not proof of actual dispatch; verify the relevant operations and guards.
         Comments, release notes, changelog entries, UI labels and examples alone
         do not prove implemented behavior. Use executable operations, guards and
         required call sites. Masked values are opaque: never invent their values

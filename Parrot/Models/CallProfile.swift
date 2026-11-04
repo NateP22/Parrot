@@ -56,6 +56,8 @@ final class CallProfile {
     /// this is purely the human-facing noun the copilot uses. Default for old rows.
     var counterpart: String = "the other person"
     var allowGeneralKnowledge: Bool
+    /// Explicit source runtime; nil on old rows until selected in Profiles.
+    var repositoryRuntimeScopeID: String? = nil
     /// Version of the built-in preset this profile was seeded from. Lets the app
     /// refresh built-ins (persona, kinds, counterpart) when presets improve,
     /// without wiping user-owned fields. 0 = pre-versioning row.

@@ -16,7 +16,7 @@ import tempfile
 from urllib.parse import quote
 
 MAX_BYTES = 24 * 1024 * 1024
-MAX_FILE_BYTES = 512 * 1024
+MAX_FILE_BYTES = 2 * 1024 * 1024
 EXCLUDED = {"node_modules", "vendor", "dist", "build", ".build", "coverage", "test", "tests",
             "__tests__", "fixtures", "docs", "documentation", "__snapshots__", "generated",
             "logs", "tmp", "cache", "certificates", "credentials", "secrets", "output", "outputs", "qa", "e2e",
@@ -51,7 +51,43 @@ def github(endpoint, gh="/Users/pubge/.local/bin/gh"):
     return json.loads(result.stdout)
 
 
-def export(repository, ref, api=github):
+def validate_runtime_scopes(scopes, files):
+    if not isinstance(scopes, list) or not 1 <= len(scopes) <= 16:
+        raise ValueError("Invalid runtime scopes")
+    paths, identities = {f["path"] for f in files}, set()
+    def matches(path, root):
+        return path.startswith(root) if root.endswith("/") else path == root
+    for scope in scopes:
+        if not isinstance(scope, dict) or set(scope) != {"id", "name", "roots", "entryPoints", "dependencyRoots"}:
+            raise ValueError("Invalid runtime scope fields")
+        identity, name = scope["id"], scope["name"]
+        if not isinstance(identity, str) or not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", identity) or identity in identities:
+            raise ValueError("Invalid runtime identity")
+        identities.add(identity)
+        if not isinstance(name, str) or not name.strip() or len(name.encode()) > 120 or any(ord(c) < 32 for c in name):
+            raise ValueError("Invalid runtime name")
+        for key in ("roots", "entryPoints", "dependencyRoots"):
+            values = scope[key]
+            if not isinstance(values, list) or len(values) > 32 or (key != "dependencyRoots" and not values) or any(not isinstance(v, str) for v in values) or len(set(values)) != len(values):
+                raise ValueError("Invalid runtime paths")
+        for root in scope["roots"] + scope["dependencyRoots"]:
+            parts = root.removesuffix("/").split("/")
+            if len(root.encode()) > 512 or any(not p or p in {".", ".."} or "\\" in p or "*" in p for p in parts) or any(ord(c) < 32 for c in root) or not any(matches(p, root) for p in paths):
+                raise ValueError("Runtime root is unsafe or absent")
+        if any(entry not in paths or not any(matches(entry, r) for r in scope["roots"]) for entry in scope["entryPoints"]):
+            raise ValueError("Runtime entry point absent or outside its roots")
+    for path in paths:
+        if sum(any(matches(path, root) for root in scope["roots"]) for scope in scopes) > 1:
+            raise ValueError("Overlapping primary runtimes")
+    for scope in scopes:
+        for root in scope["dependencyRoots"]:
+            if root.endswith("/") and any(path.startswith(root) and any(
+                    other["id"] != scope["id"] and any(matches(path, r) for r in other["roots"])
+                    for other in scopes) for path in paths):
+                raise ValueError("Cross-runtime dependency must name exact files")
+
+
+def export(repository, ref, api=github, runtime_scopes=None):
     if not re.fullmatch(r"[A-Za-z0-9_-]+/[A-Za-z0-9_.-]+", repository):
         raise ValueError("Invalid repository")
     if not ref or len(ref.encode()) > 256:
@@ -108,6 +144,9 @@ def export(repository, ref, api=github):
     result = {"schemaVersion": 1, "repository": repository, "requestedRef": ref, "commit": sha,
               "files": files, "exportEvidence": {"tree": tree_sha, "method": "GET-only pinned GitHub tree and verified original blobs",
               "excluded": excluded, "selectedCodeBytes": total, "documentsPrimary": False}}
+    if runtime_scopes is not None:
+        validate_runtime_scopes(runtime_scopes, files)
+        result["runtimeScopes"] = runtime_scopes
     raw = json.dumps(result, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
     if len(raw) > MAX_BYTES:
         raise ValueError("Encoded package too large")
@@ -119,10 +158,17 @@ def main():
     parser.add_argument("--repository", required=True)
     parser.add_argument("--ref", required=True)
     parser.add_argument("--output", required=True, type=Path)
+    parser.add_argument("--runtime-scopes", type=Path,
+                        help="Explicit operator runtime boundaries JSON; no questions, answers or inferred facts")
     args = parser.parse_args()
     if not args.output.is_absolute() or args.output.suffix != ".parrotrepo" or args.output.exists():
         raise ValueError("Use a new absolute .parrotrepo path")
-    data = export(args.repository, args.ref)
+    scopes = None
+    if args.runtime_scopes is not None:
+        if args.runtime_scopes.is_symlink() or not args.runtime_scopes.is_file() or args.runtime_scopes.stat().st_size > 64 * 1024:
+            raise ValueError("Use a regular bounded runtime configuration file")
+        scopes = json.loads(args.runtime_scopes.read_bytes())
+    data = export(args.repository, args.ref, runtime_scopes=scopes)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".code-export-", dir=args.output.parent)
     try:

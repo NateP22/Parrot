@@ -157,6 +157,7 @@ extension Redactor {
         copy.reviewedCatalog = r.reviewedCatalog
         copy.answerTrace = r.answerTrace
         copy.repositoryRevision = r.repositoryRevision
+        copy.repositoryRuntimeScopeID = r.repositoryRuntimeScopeID
         copy.reviewedQuestionKey = r.reviewedQuestionKey ?? r.currentQuestion
         copy.reviewedFactContext = r.reviewedFactContext?.redacting { redact($0) }
         if let catalog = r.reviewedCatalog, catalog.mode == .wholeReply {

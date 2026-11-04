@@ -7,15 +7,19 @@ enum ProfilePolicyTests {
         enum FirstOutcome { case answer, missingKey, transportError }
         private let lock = NSLock()
         private var modes: [Bool] = []
+        private var scopes: [String?] = []
         private var gate: CheckedContinuation<Void, Never>?
         private var released = false
         private let usesQuestionIdentity: Bool
         private let firstOutcome: FirstOutcome
-        init(usesQuestionIdentity: Bool = true, firstOutcome: FirstOutcome = .answer) {
+        private let answersFromCode: Bool
+        init(usesQuestionIdentity: Bool = true, firstOutcome: FirstOutcome = .answer, answersFromCode: Bool = false) {
             self.usesQuestionIdentity = usesQuestionIdentity
             self.firstOutcome = firstOutcome
+            self.answersFromCode = answersFromCode
         }
         var requestedModes: [Bool] { lock.withLock { modes } }
+        var requestedScopes: [String?] { lock.withLock { scopes } }
         var isConfigured: Bool { true }
 
         func release() {
@@ -31,6 +35,7 @@ enum ProfilePolicyTests {
         func analyze(_ request: AnalysisRequest) async throws -> AnalysisResult {
             let first = lock.withLock {
                 modes.append(request.allowGeneralKnowledge)
+                scopes.append(request.repositoryRuntimeScopeID)
                 return modes.count == 1
             }
             if first {
@@ -47,6 +52,15 @@ enum ProfilePolicyTests {
                 case .missingKey: throw AnalysisError.missingAPIKey
                 case .transportError: throw URLError(.timedOut)
                 }
+            }
+            if answersFromCode {
+                let scope = request.repositoryRuntimeScopeID ?? "missing"
+                let citation = request.references.compactMap(\.repositoryCitation).first!
+                return AnalysisResult(insights: [InsightDraft(kindKey: "suggestion", title: "Runtime \(scope)",
+                    detail: "Synthetic runtime answer.", source: citation.sourceName,
+                    reply: "Runtime \(scope) fixture reply.", answerKey: request.currentQuestion,
+                    repositoryCitations: [citation])], sentiment: ["score": scope == "web" ? 88 : 77],
+                    read: "Read \(scope)", coach: "Coach \(scope)", resolved: first ? ["Open fixture"] : [])
             }
             guard request.allowGeneralKnowledge else {
                 return AnalysisResult(insights: [], sentiment: [:], read: nil, coach: nil, resolved: [])
@@ -134,10 +148,53 @@ enum ProfilePolicyTests {
         check("profile policy: unchanged authorized result still arrives",
               unchangedEngine.insights.first?.reply == "General fixture reply" && unchangedAI.requestedModes == [true])
         unchangedEngine.stop()
+        testRuntimeScopeChange(check)
         testDedupAwait(check)
         testProviderError(check)
         testExcerptRouting(check)
         testExcerptDelivery(check)
+    }
+
+    @MainActor
+    private static func testRuntimeScopeChange(_ check: (String, Bool) -> Void) {
+        func wait(_ seconds: TimeInterval, until done: () -> Bool) {
+            let deadline = Date.now + seconds
+            while !done() && Date.now < deadline { RunLoop.main.run(until: .now + 0.01) }
+        }
+        for changesActive in [true, false] {
+            do {
+                let kb = KnowledgeBaseService(persistent: false)
+                try kb.installRepositorySource(RepositoryKnowledgeTests.fixture())
+                let ai = GatedProvider(answersFromCode: true)
+                let engine = CallAnalysisEngine(provider: ai)
+                let current = profile("Scoped fixture")
+                current.repositoryRuntimeScopeID = "desktop"
+                engine.knowledgeBase = kb
+                engine.start(profile: current)
+                defer { engine.stop(); ai.release() }
+                let open = Insight(kindKey: "question", title: "Open fixture", detail: "Unanswered", callTime: 0, source: nil)
+                engine.seedForSnapshot(profile: current, insights: [open], sentiment: [:], read: nil, meSeconds: 0, themSeconds: 0)
+                var publishedTitles: [String] = [], scores: [Int] = []
+                engine.onInsightInserted = { publishedTitles.append($0.title) }
+                engine.onPassCompleted = { if let score = $0.values["score"] { scores.append(score) } }
+                engine.ingest(text: "Can page links be disabled?", at: 1, source: .them)
+                wait(2) { ai.requestedScopes.count == 1 }
+                check("runtime policy: controlled first request is desktop", ai.requestedScopes == ["desktop"])
+                if changesActive { current.repositoryRuntimeScopeID = "web" }
+                else { let other = profile("Unrelated"); other.repositoryRuntimeScopeID = "web" }
+                ai.release()
+                wait(3) { engine.insights.count > 1 && engine.status == .listening }
+                if changesActive {
+                    check("runtime policy: same question requeued for changed runtime", ai.requestedScopes == ["desktop", "web"])
+                    check("runtime policy: stale card and score never published", publishedTitles == ["Runtime web"] && scores == [88])
+                    check("runtime policy: stale read/coaching cannot cross scope", engine.sentimentRead == "Read web" && engine.coachLine == "Coach web")
+                    check("runtime policy: stale resolution cannot mark an open card handled", engine.insights.first { $0.id == open.id }?.isHandled == false)
+                    check("runtime policy: only new-scope citation reaches card", engine.insights.first { $0.title == "Runtime web" }?.repositoryCitations?.first?.path == "server/pageLinks.js")
+                } else {
+                    check("runtime policy: unrelated profile edit retains authorized result", ai.requestedScopes == ["desktop"] && publishedTitles == ["Runtime desktop"] && scores == [77])
+                }
+            } catch { check("runtime policy: fictional integration fixture completes", false) }
+        }
     }
 
     /// Intercepts only synthetic matcher requests; no keychain or network.

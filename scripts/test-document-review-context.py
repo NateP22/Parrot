@@ -24,7 +24,7 @@ prompt_end = source.index('\n        """', prompt_start) + len('\n        """')
 subject = r'''
 import Foundation
 struct RepositoryCitation { let commit: String; let path: String; let startLine: Int; let endLine: Int }
-struct KBReference { let documentName: String; let text: String; var repositoryCitation: RepositoryCitation? = nil }
+struct KBReference { let documentName: String; let text: String; var repositoryCitation: RepositoryCitation? = nil; var note: String? = nil }
 struct InsightDraft { let reply: String?; let source: String? }
 struct AnalysisRequest {
     let transcript: String
@@ -35,6 +35,7 @@ struct AnalysisRequest {
     var reviewedModelEvidence: [[String: Any]]? = nil
     var usesReviewedFacts = false
     var usesRepository = false
+    var repositoryRuntimeScopeID: String? = nil
 }
 final class Subject {
     static let model = "fictional-no-network"
@@ -112,6 +113,16 @@ Task { @MainActor in
             contexts.append(review["recent_conversation"] as? String ?? "")
         }
         check("identical followup keeps distinct antecedents", contexts[0] != contexts[1])
+        var codeRequest = AnalysisRequest(transcript: "Them: Which option?", currentQuestion: "Which option?",
+            references: [KBReference(documentName: "fictional/atlas/host/main.js", text: "if (enabled) render();",
+                repositoryCitation: .init(commit: String(repeating: "a", count: 40), path: "host/main.js", startLine: 1, endLine: 1),
+                note: "Explicit dependency source, not selected runtime implementation.")], instructions: "", callBrief: "")
+        codeRequest.usesRepository = true
+        codeRequest.repositoryRuntimeScopeID = "desktop"
+        let codeEvidence = Subject.evidenceItems(codeRequest)[0]
+        check("code evidence pins selected runtime", codeEvidence["selected_runtime"] as? String == "desktop")
+        check("code evidence retains dependency role", codeEvidence["retrieval_note"] as? String == codeRequest.references[0].note)
+        check("code evidence preserves actual text", codeEvidence["text"] as? String == "if (enabled) render();")
         let request = AnalysisRequest(transcript: "Them: Which option?", currentQuestion: "Which option?",
             references: [], instructions: "", callBrief: "")
         let draft = InsightDraft(reply: "Check the source first.", source: nil)

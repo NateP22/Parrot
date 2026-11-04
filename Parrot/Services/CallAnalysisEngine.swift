@@ -380,6 +380,7 @@ final class CallAnalysisEngine {
     private func requestIsCurrent(_ request: AnalysisRequest, profileID: UUID?) -> Bool {
         guard activeProfile?.id == profileID,
               knowledgeBase?.repositoryRevision == request.repositoryRevision,
+              (!request.usesRepository || activeProfile?.repositoryRuntimeScopeID == request.repositoryRuntimeScopeID),
               (request.usesRepository ? false : (activeProfile?.allowGeneralKnowledge ?? true)) == request.allowGeneralKnowledge else { return false }
         return request.allowGeneralKnowledge ||
             knowledgeBase?.reviewedAnswerSnapshot(for: profileID)?.revisionToken == request.reviewedCatalog?.revisionToken
@@ -419,7 +420,14 @@ final class CallAnalysisEngine {
         // first await so a Settings edit cannot change only half a request.
         let requestedProfileID = profile?.id
         let requestedRepositoryRevision = knowledgeBase?.repositoryRevision
+        let requestedRuntimeScopeID = profile?.repositoryRuntimeScopeID
         let requestedGeneralKnowledge = requestedRepositoryRevision == nil ? (profile?.allowGeneralKnowledge ?? true) : false
+        if let issue = knowledgeBase?.repositoryScopeIssue(for: requestedRuntimeScopeID) {
+            status = .error(issue)
+            analysisTask = nil
+            analysisHasQuestion = nil
+            return
+        }
         // An empty kind list can't produce a valid schema ("enum": [] is a 400
         // on every call) — surface it once instead of erroring forever.
         guard !(profile?.kinds ?? []).isEmpty else {
@@ -475,12 +483,13 @@ final class CallAnalysisEngine {
                 let query = requestedRepositoryRevision == nil ? question
                     : Self.repositoryRetrievalQuery(question: question, recent: recent.map(\.text))
                 references = await kb.search(query: query, profileID: requestedProfileID,
+                    runtimeScopeID: requestedRuntimeScopeID,
                     topK: strict ? 12 : 2, contextNeighbors: strict ? 1 : 0)
                 guard isActive, !Task.isCancelled else { return }
             }
             let windowQuery = recent.map(\.text).joined(separator: " ")
             let windowReferences = requestedRepositoryRevision != nil && currentQuestion != nil
-                ? [] : await kb.search(query: windowQuery, profileID: requestedProfileID)
+                ? [] : await kb.search(query: windowQuery, profileID: requestedProfileID, runtimeScopeID: requestedRuntimeScopeID)
             guard isActive, !Task.isCancelled else { return }
             for reference in windowReferences
             where !references.contains(where: {
@@ -488,6 +497,14 @@ final class CallAnalysisEngine {
             }) {
                 references.append(reference)
             }
+        }
+        // A scope/source edit while search was off-main-thread must invalidate
+        // evidence before any provider sees it, as well as before card delivery.
+        guard activeProfile?.id == requestedProfileID,
+              knowledgeBase?.repositoryRevision == requestedRepositoryRevision,
+              (requestedRepositoryRevision == nil || activeProfile?.repositoryRuntimeScopeID == requestedRuntimeScopeID) else {
+            requeueAnalysis(previousAnalyzedCount: previousAnalyzedCount, previousPendingSince: previousPendingSince)
+            return
         }
         // Pin the chunks Jev picked since the last pass, so Haiku reasons over
         // the same evidence the user is already looking at (it only sees the
@@ -521,7 +538,8 @@ final class CallAnalysisEngine {
             forceLocal: forceLocal,
             reviewedCatalog: reviewedCatalog,
             answerTrace: answerTrace,
-            repositoryRevision: requestedRepositoryRevision
+            repositoryRevision: requestedRepositoryRevision,
+            repositoryRuntimeScopeID: requestedRuntimeScopeID
         ).preparingReviewedFacts()
         answerTrace?.mark(.retrievalDone)
 

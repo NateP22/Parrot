@@ -192,6 +192,7 @@ final class ProfileStore {
             kinds: profile.kinds, gauges: profile.gauges)
         // A copy can't follow a built-in's report, so it keeps its own copy.
         copy.setCustomReport(profile.reportTemplate)
+        copy.repositoryRuntimeScopeID = profile.repositoryRuntimeScopeID
         copy.sharedID = UUID()
         copy.sharedVersion = 1
         copy.sharedSource = "user"
@@ -267,6 +268,7 @@ final class ProfileStore {
         p.tone = f.tone
         p.counterpart = f.counterpart
         p.allowGeneralKnowledge = f.allowGeneralKnowledge
+        p.repositoryRuntimeScopeID = f.repositoryRuntimeScopeID
         p.kinds = f.kinds.map {
             ProfileKind(id: UUID(), key: $0.key, label: $0.label, colorHex: $0.color, iconSystemName: $0.icon,
                         triggerDescription: $0.trigger, isPinned: $0.pinned, priority: $0.priority)

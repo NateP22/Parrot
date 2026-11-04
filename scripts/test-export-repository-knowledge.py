@@ -83,6 +83,31 @@ class ExportTests(unittest.TestCase):
         self.assertEqual(sum("/commits/" in x for x in calls), 1)
         self.assertEqual(len(calls), 3)
 
+    def test_explicit_scope_round_trip_and_missing_entry_rejected(self):
+        scope = {"id": "desktop", "name": "Desktop", "roots": ["client/"],
+                 "entryPoints": ["client/settings.json"], "dependencyRoots": []}
+        package = json.loads(module.export("fictional/atlas", "main", api=self.fixture().__getitem__, runtime_scopes=[scope]))
+        self.assertEqual(package["runtimeScopes"], [scope])
+        for change in ({"entryPoints": ["client/missing.js"]}, {"roots": ["client/../server/"]},
+                       {"roots": ["client/"] * 2}, {"id": "BAD ID"}):
+            with self.assertRaises(ValueError):
+                module.export("fictional/atlas", "main", api=self.fixture().__getitem__, runtime_scopes=[dict(scope, **change)])
+        with self.assertRaises(ValueError):
+            module.export("fictional/atlas", "main", api=self.fixture().__getitem__, runtime_scopes=[scope, scope])
+        with self.assertRaises(ValueError):
+            module.export("fictional/atlas", "main", api=self.fixture().__getitem__, runtime_scopes=[scope, dict(scope, id="other")])
+
+    def test_large_original_entry_is_included_without_changing_total_cap(self):
+        raw = b"// fictional original entry\n" + b" " * (1400 * 1024)
+        package = json.loads(module.export("fictional/atlas", "main", api=self.fixture(raw).__getitem__))
+        self.assertEqual(package["files"][0]["text"].encode(), raw)
+        self.assertEqual(module.MAX_BYTES, 24 * 1024 * 1024)
+
+    def test_oversized_entry_and_secret_entry_remain_withheld(self):
+        for raw in (b" " * (module.MAX_FILE_BYTES + 1), b" " * (600 * 1024) + b"sk-ant-" + b"Q" * 30):
+            with self.assertRaises(ValueError):
+                module.export("fictional/atlas", "main", api=self.fixture(raw).__getitem__)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -41,10 +41,28 @@ struct ProfileFile: Codable {
         var tone: String
         var counterpart: String
         var allowGeneralKnowledge: Bool
+        var repositoryRuntimeScopeID: String? = nil
         var kinds: [Kind]
         var gauges: [Gauge]
         /// nil = the Default report, word for word as today.
         var report: Report?
+
+        enum CodingKeys: String, CodingKey {
+            case name, icon, summary, persona, tone, counterpart, allowGeneralKnowledge,
+                 repositoryRuntimeScopeID, kinds, gauges, report
+        }
+        func encode(to encoder: Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(name, forKey: .name); try c.encode(icon, forKey: .icon)
+            try c.encode(summary, forKey: .summary); try c.encode(persona, forKey: .persona)
+            try c.encode(tone, forKey: .tone); try c.encode(counterpart, forKey: .counterpart)
+            try c.encode(allowGeneralKnowledge, forKey: .allowGeneralKnowledge)
+            // Explicit null lets clearing a decoded scope survive unknown-field
+            // preservation instead of restoring the old raw JSON value.
+            try c.encode(repositoryRuntimeScopeID, forKey: .repositoryRuntimeScopeID)
+            try c.encode(kinds, forKey: .kinds); try c.encode(gauges, forKey: .gauges)
+            try c.encodeIfPresent(report, forKey: .report)
+        }
     }
 
     struct Kind: Codable, Equatable {
@@ -115,6 +133,7 @@ struct ProfileFile: Codable {
         Profile(
             name: p.name, icon: p.iconSystemName, summary: p.summary, persona: p.persona, tone: p.tone,
             counterpart: p.counterpart, allowGeneralKnowledge: p.allowGeneralKnowledge,
+            repositoryRuntimeScopeID: p.repositoryRuntimeScopeID,
             kinds: p.kinds.map {
                 Kind(key: $0.key, label: $0.label, color: $0.colorHex, icon: $0.iconSystemName,
                      trigger: $0.triggerDescription, pinned: $0.isPinned, priority: $0.priority)
@@ -189,6 +208,10 @@ struct ProfileFile: Codable {
         try text(p.icon, "The icon")
         try text(p.summary, "The summary")
         try text(p.counterpart, "The other side's name")
+        if let scope = p.repositoryRuntimeScopeID,
+           scope.range(of: #"^[a-z][a-z0-9-]{0,63}$"#, options: .regularExpression) == nil {
+            throw Refused(reason: "The product runtime identity is invalid.")
+        }
         try text(p.persona, "The persona", max: 4000)
         try text(p.tone, "The tone", max: 4000)
         guard p.kinds.count <= 20 else { throw Refused(reason: "A profile can have at most 20 card types.") }

@@ -27,6 +27,7 @@ final class KnowledgeBaseService {
     private var repositoryConfigured = false
     private var repositoryPassages: [RepositoryKnowledge.Passage] = []
     private var repositoryTerms: [[String]] = []
+    private var repositoryCodeIndex: RepositoryCodeIndex?
     private var repositoryContentRevision: String?
     private(set) var repositoryLoading = false
     private var repositoryWorkToken = UUID()
@@ -42,6 +43,18 @@ final class KnowledgeBaseService {
         guard repositoryConfigured else { return nil }
         guard let source = repositorySource else { return repositoryError ?? "Code source unavailable. Re-import its snapshot." }
         return "Code first: \(source.repository) @ \(source.commit.prefix(8)); \(source.files.count) source files. Documents are secondary."
+    }
+
+    func repositoryScopeIssue(for scopeID: String?) -> String? {
+        guard repositoryConfigured else { return nil }
+        guard !repositoryLoading, let source = repositorySource else { return repositoryStatus }
+        guard let scopes = source.runtimeScopes, !scopes.isEmpty else {
+            return "Import a code snapshot with product runtimes before answering from code."
+        }
+        guard let scopeID, scopes.contains(where: { $0.id == scopeID }) else {
+            return "Choose the product runtime in Settings → Profiles before answering from code."
+        }
+        return nil
     }
 
     var isEmpty: Bool { documents.isEmpty && !repositoryConfigured }
@@ -439,6 +452,7 @@ final class KnowledgeBaseService {
         let source: RepositoryKnowledge
         let passages: [RepositoryKnowledge.Passage]
         let terms: [[String]]
+        let codeIndex: RepositoryCodeIndex
     }
 
     private nonisolated static func prepareRepository(_ data: Data) throws -> PreparedRepository {
@@ -446,7 +460,8 @@ final class KnowledgeBaseService {
         let passages = source.passages()
         guard !passages.isEmpty else { throw RepositoryKnowledge.Failure.invalid("empty index") }
         return PreparedRepository(source: source, passages: passages,
-            terms: passages.map { lexicalTokens(RepositoryKnowledge.tokens($0.searchText).joined(separator: " ")) })
+            terms: passages.map { lexicalTokens(RepositoryKnowledge.tokens($0.searchText).joined(separator: " ")) },
+            codeIndex: RepositoryCodeIndex(source: source, passages: passages))
     }
 
     private nonisolated static func readPreparedRepository(at url: URL) throws -> (data: Data, index: PreparedRepository) {
@@ -468,6 +483,7 @@ final class KnowledgeBaseService {
         repositoryLoading = false
         repositorySource = index.source
         repositoryPassages = index.passages
+        repositoryCodeIndex = index.codeIndex
         repositoryTerms = index.terms
         repositoryContentRevision = index.source.revision
         repositoryConfigured = true
@@ -518,14 +534,20 @@ final class KnowledgeBaseService {
         } catch { repositoryError = error.localizedDescription }
     }
 
-    private func searchRepository(query: String, topK: Int) async -> [KBReference] {
-        let passages = repositoryPassages, terms = repositoryTerms
-        let order = await Task.detached(priority: .userInitiated) {
-            Self.bm25Order(query: Self.lexicalTokens(RepositoryKnowledge.tokens(query).joined(separator: " ")), documents: terms)
+    private func searchRepository(query: String, scopeID: String?, topK: Int) async -> [KBReference] {
+        guard let index = repositoryCodeIndex else { return [] }
+        let terms = repositoryTerms
+        let selected = await Task.detached(priority: .userInitiated) {
+            let candidates = index.primaryPassageIndices(scopeID: scopeID)
+            let order = Self.bm25Order(query: Self.lexicalTokens(RepositoryKnowledge.tokens(query).joined(separator: " ")),
+                documents: candidates.map { terms[$0] })
+            return index.expanded(seedIndices: order.map { candidates[$0] }, scopeID: scopeID, limit: min(6, max(0, topK)))
         }.value
-        return order.prefix(min(6, max(0, topK))).map {
-            let passage = passages[$0]
-            return KBReference(documentName: passage.citation.sourceName, note: nil,
+        return selected.map { passage in
+            let primary = index.source.runtimeScopes?.first(where: { $0.id == scopeID })?.contains(passage.citation.path) == true
+            return KBReference(documentName: passage.citation.sourceName,
+                note: primary ? "Selected runtime source; navigation hints do not prove execution."
+                    : "Explicit dependency source, not the selected runtime implementation.",
                 text: passage.text, repositoryCitation: passage.citation)
         }
     }
@@ -533,11 +555,14 @@ final class KnowledgeBaseService {
     /// Returns the best-matching chunks for the recent conversation, joined with
     /// each document's current note. Pass `profileID` to restrict to documents
     /// tagged into that profile; `nil` searches all (back-compat).
-    func search(query: String, profileID: UUID? = nil, topK: Int = 4,
+    func search(query: String, profileID: UUID? = nil, runtimeScopeID: String? = nil, topK: Int = 4,
                 contextNeighbors: Int = 0) async -> [KBReference] {
         guard !query.isEmpty else { return [] }
         guard !repositoryConfigured || repositorySource != nil else { return [] }
-        let code = repositoryConfigured ? await searchRepository(query: query, topK: max(1, topK)) : []
+        guard repositoryScopeIssue(for: runtimeScopeID) == nil else { return [] }
+        let code = repositoryConfigured ? await searchRepository(query: query, scopeID: runtimeScopeID, topK: max(1, topK)) : []
+        // A scoped source miss cannot be replaced by secondary documents.
+        guard !repositoryConfigured || !code.isEmpty else { return [] }
         guard !chunks.isEmpty else { return code }
 
         // Only documents this call type may use (nil = every document not off).

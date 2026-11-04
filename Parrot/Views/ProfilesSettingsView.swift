@@ -281,6 +281,28 @@ private struct ProfileDetailView: View {
 
             ProfileReportCard(profile: profile)
 
+            if knowledgeBase.repositoryRevision != nil {
+                SettingsCard(title: "Product runtime") {
+                    SettingsRow(first: true) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Picker("Answer using code for", selection: $profile.repositoryRuntimeScopeID) {
+                                Text("Choose a product runtime").tag(String?.none)
+                                if let selected = profile.repositoryRuntimeScopeID,
+                                   !(knowledgeBase.repositorySource?.runtimeScopes ?? []).contains(where: { $0.id == selected }) {
+                                    Text("Unavailable runtime — choose again").tag(Optional(selected))
+                                }
+                                ForEach(knowledgeBase.repositorySource?.runtimeScopes ?? []) { scope in
+                                    Text(scope.name).tag(Optional(scope.id))
+                                }
+                            }
+                            if let issue = knowledgeBase.repositoryScopeIssue(for: profile.repositoryRuntimeScopeID) {
+                                Hint(issue)
+                            }
+                        }
+                    }
+                }
+            }
+
             // MARK: Knowledge Documents section
             // Read-only: Use for is set on the Knowledge page (folders and
             // documents); one editor per setting.
@@ -389,6 +411,10 @@ private struct ProfileDetailView: View {
         // built-in preset refresh never overwrites it (see ProfileStore).
         .onChange(of: profile.persona) { _, _ in profile.isUserModified = true }
         .onChange(of: profile.counterpart) { _, _ in profile.isUserModified = true }
+        .onChange(of: profile.repositoryRuntimeScopeID) { _, _ in
+            profile.isUserModified = true
+            try? context.save()
+        }
     }
 
     // MARK: - Kind mutation helpers
