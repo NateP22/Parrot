@@ -447,7 +447,13 @@ struct RepositoryModuleContext {
                 if arrays[name] != nil { valid = false; complete = false }; arrays[name] = (i, values, valid)
             }
             if at(i + 3, "new"), at(i + 4, "File"), at(i + 5, "("), let end = close(i + 5, "(", ")") {
-                let candidates = ((i + 6)..<end).filter { !t[$0].literal && at($0 + 1, "[") && v.indices.contains($0 + 3) && !t[$0 + 2].literal && at($0 + 3, "]") }.map { v[$0] }
+                var candidates: [String] = []
+                for index in (i + 6)..<end {
+                    guard !t[index].literal, at(index + 1, "["),
+                          v.indices.contains(index + 3), !t[index + 2].literal,
+                          at(index + 3, "]") else { continue }
+                    candidates.append(v[index])
+                }
                 let position = ((i + 6)..<end).first { !t[$0].literal && at($0 + 1, "[") }
                 let literalLeaf = position.map { $0 + 4 == end && ($0 == i + 6 || (at($0 - 1, "+") && t[$0 - 2].literal && v[$0 - 2].hasSuffix("/"))) } ?? false
                 if candidates.count == 1 && literalLeaf && at(end + 1, ";") && assignments[name] == 1 && bindings[name] == nil { bindings[name] = (i, candidates[0]) } else { complete = false }
