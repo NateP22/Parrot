@@ -1,5 +1,30 @@
 import Foundation
 
+/// Capacity for the bounded QA evidence writer, not a reserve for the whole Mac.
+/// Admission never proves complete, legible, visible or correctly timed evidence.
+enum AnswerFrameEvidenceBudget {
+    static let movieBytes = 1024 * 1024 * 1024
+    static let frameMetadataBytes = 16 * 1024 * 1024
+    static let windowMetadataBytes = 16 * 1024 * 1024
+    static let summaryBytes = 64 * 1024
+    // Covers one maximum-sized frame plus encoder/container write overhead.
+    // Concurrent writers can still exhaust disk: write/finish errors fail closed.
+    static let writerOverheadBytes = 256 * 1024 * 1024
+    static let minimumFreeDiskBytes = UInt64(movieBytes + frameMetadataBytes
+        + windowMetadataBytes + summaryBytes + writerOverheadBytes)
+
+    static func admits(freeDiskBytes: UInt64?) -> Bool {
+        guard let freeDiskBytes else { return false }
+        return freeDiskBytes >= minimumFreeDiskBytes
+    }
+
+    static func admitsSidecars(frames: Int, window: Int, summary: Int) -> Bool {
+        (0...frameMetadataBytes).contains(frames)
+            && (0...windowMetadataBytes).contains(window)
+            && (0...summaryBytes).contains(summary)
+    }
+}
+
 /// One-shot result with an independent deadline. Late SDK callbacks are ignored.
 enum AnswerFrameDeadline {
     static func value<Value: Sendable>(seconds: Double,

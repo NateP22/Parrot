@@ -74,8 +74,8 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `QACredentialProbe.swift` | 145 | QA-only non-secret write/verify-cleanup/absence phases through actual APIKeyStore; dual UI refusal, bounded reports/timeouts; no provider/audio/store |
 | `Services/AnswerTrace.swift` | 260 | Explicit stable-QA-only bounded diagnostic journal, integer Mach clock, immutable question/request/insight bindings; no raw text or visible-frame/native acceptance claim |
 | `Services/AnswerAudioTrace.swift` | 180 | Stable-QA raw capture clocks and emitted sample/padding provenance; bounded session journal, calibration and actual file mapping remain unverified |
-| `Services/AnswerFrameTrace.swift` | 145 | QA own-window frame ownership/clock/geometry/retention policy; bounded callback journal never grants native visibility acceptance |
-| `Services/NativeAnswerFrameRecorder.swift` | 380 | Passive exact-own-window SCK screen-only movie, full callback metadata and sample/PTS readback; resource-gated, independent visible-text/occlusion review required |
+| `Services/AnswerFrameTrace.swift` | 170 | QA own-window frame ownership/clock/geometry/retention and bounded movie/sidecar write budget; admission/journal never grant native visibility acceptance |
+| `Services/NativeAnswerFrameRecorder.swift` | 380 | Passive exact-own-window SCK screen-only movie, full callback metadata and sample/PTS readback; bounded writer-space admission and capped sidecars, independent visible-text/occlusion review required |
 | `Parrot/ProfileTest+FrameTrace.swift` | 80 | Synthetic owner/clock/idle/retention/cap/epoch/geometry regressions; no screen recording or native timing proof |
 | `Parrot/ProfileTest+QASetup.swift` | 35 | Synthetic exact-QA launch admission, conflicting CLI and typed-flag regressions; no native readiness |
 | `Parrot/ReviewedSelectorObservation.swift` | 100 | Response-only QA classifier and per-invocation capture; rejects invalid/truncated/duplicate fields and stale/duplicate callbacks; never authorizes a reply |

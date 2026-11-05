@@ -2,6 +2,20 @@ import Foundation
 
 enum FrameTraceChecks {
     @MainActor static func run(_ check: (String, Bool) -> Void) {
+        let budget = AnswerFrameEvidenceBudget.minimumFreeDiskBytes
+        check("frame budget refuses unknown available storage", !AnswerFrameEvidenceBudget.admits(freeDiskBytes:nil))
+        check("frame budget refuses an incomplete writer allocation", !AnswerFrameEvidenceBudget.admits(freeDiskBytes:budget-1))
+        check("frame budget admits its complete bounded allocation", AnswerFrameEvidenceBudget.admits(freeDiskBytes:budget))
+        check("frame budget includes every sidecar and writer margin", budget > UInt64(AnswerFrameEvidenceBudget.movieBytes
+            + AnswerFrameEvidenceBudget.frameMetadataBytes + AnswerFrameEvidenceBudget.windowMetadataBytes
+            + AnswerFrameEvidenceBudget.summaryBytes) && AnswerFrameEvidenceBudget.writerOverheadBytes >= 4096*4096*4)
+        check("frame bounded sidecars accept exact caps", AnswerFrameEvidenceBudget.admitsSidecars(
+            frames:AnswerFrameEvidenceBudget.frameMetadataBytes,window:AnswerFrameEvidenceBudget.windowMetadataBytes,
+            summary:AnswerFrameEvidenceBudget.summaryBytes))
+        check("frame sidecar overflow never qualifies", !AnswerFrameEvidenceBudget.admitsSidecars(
+            frames:AnswerFrameEvidenceBudget.frameMetadataBytes+1,window:0,summary:0)
+            && !AnswerFrameEvidenceBudget.admitsSidecars(frames:0,window:AnswerFrameEvidenceBudget.windowMetadataBytes+1,summary:0)
+            && !AnswerFrameEvidenceBudget.admitsSidecars(frames:0,window:0,summary:AnswerFrameEvidenceBudget.summaryBytes+1))
         var deadlineReturned=false
         Task { @MainActor in
             let value: Int?=await AnswerFrameDeadline.value(seconds:0.01) { _ in }

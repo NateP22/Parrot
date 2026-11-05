@@ -75,18 +75,9 @@ import VideoToolbox
         while !FileManager.default.fileExists(atPath: parent.path), parent.path != "/" {
             parent.deleteLastPathComponent()
         }
-        guard let attrs = try? FileManager.default.attributesOfFileSystem(forPath: parent.path),
-              let free = attrs[.systemFreeSize] as? NSNumber, free.uint64Value >= 100 * 1024 * 1024 * 1024 else { return false }
-        var stats = vm_statistics64_data_t()
-        var count = mach_msg_type_number_t(MemoryLayout<vm_statistics64_data_t>.size / MemoryLayout<integer_t>.size)
-        let result = withUnsafeMutablePointer(to: &stats) { pointer in
-            pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics64(mach_host_self(), HOST_VM_INFO64, $0, &count)
-            }
-        }
-        var pageSize: vm_size_t = 0
-        guard result == KERN_SUCCESS, host_page_size(mach_host_self(), &pageSize) == KERN_SUCCESS else { return false }
-        return (UInt64(stats.free_count)+UInt64(stats.speculative_count))*UInt64(pageSize) >= 2 * 1024 * 1024 * 1024
+        let attrs = try? FileManager.default.attributesOfFileSystem(forPath: parent.path)
+        let free = (attrs?[.systemFreeSize] as? NSNumber)?.uint64Value
+        return AnswerFrameEvidenceBudget.admits(freeDiskBytes: free)
     }
     private func start(windowID: UInt32, outputDirectory: URL, sessionID: UUID, generation expected: UUID) async throws {
         guard Self.isEnabled, Self.resourcesReady(at: outputDirectory),
@@ -226,7 +217,7 @@ private final class NativeAnswerFrameSink: NSObject, SCStreamOutput, SCStreamDel
     private var onFirstRetainedFrame: (@Sendable () -> Void)?
     private let failureHandler: @Sendable () -> Void
     private var visibility: [[String:UInt64]] = []
-    private let movieLimit = 1024 * 1024 * 1024
+    private let movieLimit = AnswerFrameEvidenceBudget.movieBytes
 
     init(sessionID: UUID, windowID: UInt32, root: URL, width: Int, height: Int,
          failureHandler: @escaping @Sendable () -> Void) throws {
@@ -356,19 +347,25 @@ private final class NativeAnswerFrameSink: NSObject, SCStreamOutput, SCStreamDel
         if !mediaVerified { trace.noteWriteError(sessionID:sessionID) }
         do {
             let metadata = try JSONEncoder().encode(trace.snapshot())
-            guard metadata.count <= 16*1024*1024 else { throw CocoaError(.fileWriteOutOfSpace) }
+            guard metadata.count <= AnswerFrameEvidenceBudget.frameMetadataBytes else { throw CocoaError(.fileWriteOutOfSpace) }
             let frameURL = root.appendingPathComponent("frames.json")
             try metadata.write(to:frameURL,options:.withoutOverwriting)
             let windowData = try JSONSerialization.data(withJSONObject:visibility)
+            guard windowData.count <= AnswerFrameEvidenceBudget.windowMetadataBytes else { throw CocoaError(.fileWriteOutOfSpace) }
             try windowData.write(to:root.appendingPathComponent("window-observations.json"),options:.withoutOverwriting)
             let summary: [String:Any] = ["schema":"qa-own-window-movie-v1","sessionID":sessionID.uuidString,
                 "writerCompleted":completed,"containerSamplesAndPTSVerified":mediaVerified,
                 "mediaTimeScale":1_000_000_000,"movieFrameCount":encodedCount,
                 "movieSHA256":try Self.digestFile(movieURL),
                 "metadataSHA256":SHA256.hash(data:metadata).map { String(format:"%02x",$0) }.joined(),
+                "resourcePolicy":"bounded-qa-writer-v1",
+                "minimumFreeDiskBytes":AnswerFrameEvidenceBudget.minimumFreeDiskBytes,
                 "decodedLegibilityVerified":false,"independentVisibilityVerified":false,"nativeAcceptance":false]
             let summaryURL=root.appendingPathComponent("SUMMARY.json")
-            try JSONSerialization.data(withJSONObject:summary,options:.sortedKeys).write(to:summaryURL,options:.withoutOverwriting)
+            let summaryData = try JSONSerialization.data(withJSONObject:summary,options:.sortedKeys)
+            guard AnswerFrameEvidenceBudget.admitsSidecars(frames:metadata.count,
+                window:windowData.count,summary:summaryData.count) else { throw CocoaError(.fileWriteOutOfSpace) }
+            try summaryData.write(to:summaryURL,options:.withoutOverwriting)
             for file in [movieURL,frameURL,root.appendingPathComponent("window-observations.json"),summaryURL] {
                 try FileManager.default.setAttributes([.posixPermissions:0o600],ofItemAtPath:file.path)
             }
