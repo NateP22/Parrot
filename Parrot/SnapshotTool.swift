@@ -1198,10 +1198,31 @@ enum AnalyzeTest {
         var exitCode: Int32 = 1
         let sem = DispatchSemaphore(value: 0)
         Task {
+            // Exact QA identity + plist opt-in only; ordinary app runs create
+            // no journal. The receipt contains metadata, never provider text.
+            let traceRecorder = AnswerTraceRecorder.shared
+            let traceSession = traceRecorder.startSession()
+            var tracedRequest = request
+            if let traceSession,
+               let context = traceRecorder.makeContext(source: .them, expectedSessionID: traceSession) {
+                tracedRequest.answerTrace = traceRecorder.link(context: context, profileID: nil,
+                    catalogRevisionToken: nil, allowGeneralKnowledge: request.allowGeneralKnowledge)
+            }
+            defer {
+                if traceSession != nil, let trace = traceRecorder.finish() {
+                    for event in trace.events where event.stage == .responseReceived {
+                        if let metadata = event.httpResponse {
+                            print("model-receipt: requested=\(event.model ?? "missing") returned=\(metadata.returnedModel ?? "unavailable") http=\(metadata.statusCode.map(String.init) ?? "unavailable") state=\(metadata.modelState.rawValue)")
+                        }
+                    }
+                    print("model-receipt: trace=\(trace.sessionID?.uuidString ?? "missing") writeErrors=\(trace.writeErrors) truncated=\(trace.truncated) nativeAcceptance=false")
+                }
+                sem.signal()
+            }
             let analysisProvider = SwitchingAnalysisProvider()
             let start = Date()
             do {
-                let result = try await analysisProvider.analyze(request)
+                let result = try await analysisProvider.analyze(tracedRequest)
                 let secs = String(format: "%.1f", Date().timeIntervalSince(start))
                 print("=== analyze-test (\(CopilotProviderKind.selected.rawValue) · \(CopilotProviderKind.activeModelName)) — \(secs)s")
                 print("coach: \(result.coach ?? "-")")
@@ -1221,7 +1242,6 @@ enum AnalyzeTest {
             } catch {
                 print("analyze-test FAILED: \(error.localizedDescription)")
             }
-            sem.signal()
         }
         sem.wait()
         exit(exitCode)

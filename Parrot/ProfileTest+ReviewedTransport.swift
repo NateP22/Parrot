@@ -6,6 +6,7 @@ final class ReviewedMockProtocol: URLProtocol {
     static var failure:URLError?
     static var requests:[URLRequest]=[]
     static var bodies:[Data]=[]
+    static var queuedReplies:[(Data,Int)]=[]
     override class func canInit(with request: URLRequest)->Bool { true }
     override class func canonicalRequest(for request: URLRequest)->URLRequest {request}
     override func startLoading() {
@@ -18,9 +19,10 @@ final class ReviewedMockProtocol: URLProtocol {
             Self.bodies.append(result)
         } else { Self.bodies.append(Data()) }
         if let failure=Self.failure {client?.urlProtocol(self,didFailWithError:failure);return}
-        let response=HTTPURLResponse(url:request.url!,statusCode:Self.code,httpVersion:nil,headerFields:nil)!
+        let next = Self.queuedReplies.isEmpty ? (Self.reply,Self.code) : Self.queuedReplies.removeFirst()
+        let response=HTTPURLResponse(url:request.url!,statusCode:next.1,httpVersion:nil,headerFields:nil)!
         client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed)
-        client?.urlProtocol(self,didLoad:Self.reply)
+        client?.urlProtocol(self,didLoad:next.0)
         client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
@@ -56,12 +58,16 @@ enum ReviewedTransportTests {
         count += 1
         if !okay {failed += 1;print("FAIL "+name)}
     }
-    static func envelope(_ object:[String:Any],stop:String="end_turn")->Data {
+    static func envelope(_ object:[String:Any],stop:String="end_turn",model:String?=nil)->Data {
         let text=String(decoding:try! JSONSerialization.data(withJSONObject:object),as:UTF8.self)
-        return try! JSONSerialization.data(withJSONObject:["content":[["type":"text","text":text]],"stop_reason":stop,"usage":["input_tokens":10,"output_tokens":5]])
+        var value:[String:Any] = ["content":[["type":"text","text":text]],"stop_reason":stop,"usage":["input_tokens":10,"output_tokens":5]]
+        if let model { value["model"] = model }
+        return try! JSONSerialization.data(withJSONObject:value)
     }
     static func run() async throws {
         count=0;failed=0
+        ReviewedMockProtocol.queuedReplies=[]
+        defer { ReviewedMockProtocol.queuedReplies=[] }
         let catalog=try ReviewedAnswerCatalog.decode(ReviewedAnswerTests.fixtureData)
         let source=catalog.sources[0], answer=catalog.answers[0]
         let doc=KBDocument(name:source.name,chunkCount:1,addedAt:Date(),contentSHA256:source.sha256)
@@ -269,6 +275,27 @@ enum ReviewedTransportTests {
             let missingReopen=KnowledgeBaseService(storageURL:index)
             check("KB missing configured library never becomes legacy",missingReopen.reviewedAnswerSnapshot(for:nil)?.answers.isEmpty==true)
         }
+        // Actual production performRequest, synthetic URLProtocol only. A retry
+        // must retain each real HTTP result rather than repeating a requested ID.
+        let trace=AnswerTraceRecorder(enabled:true)
+        let traceSession=trace.startSession()!
+        let context=trace.makeContext(source:.them,expectedSessionID:traceSession)!
+        let link=trace.link(context:context,profileID:nil,catalogRevisionToken:nil)!
+        var traced=AnalysisRequest(transcript:"Them: Fictional transport check.",knownInsightTitles:[],references:[],instructions:"",callBrief:"",allowGeneralKnowledge:true,knownDocumentNames:[],persona:"",counterpart:"",kinds:[],gauges:[])
+        traced.answerTrace=link
+        let returned="claude-haiku-5-5-20261101"
+        let success=envelope(["insights":[],"sentiment":["score":50],"resolved":[]],model:returned)
+        ReviewedMockProtocol.failure=nil;ReviewedMockProtocol.requests=[];ReviewedMockProtocol.bodies=[]
+        ReviewedMockProtocol.queuedReplies=[(Data("{\"error\":{\"message\":\"fictional retry\"}}".utf8),429),(success,200)]
+        let tracedResult=try await provider.analyze(traced)
+        let responseEvents=trace.snapshot().events.filter { $0.stage == .responseReceived }
+        check("HTTP metadata retry uses two actual mock requests",ReviewedMockProtocol.requests.count==2 && tracedResult.sentiment["score"]==50)
+        check("HTTP metadata keeps actual retry statuses",responseEvents.map { $0.httpResponse?.statusCode } == [429,200])
+        check("HTTP metadata keeps requested and returned model separate",responseEvents.last?.model=="claude-haiku-5-5" && responseEvents.last?.httpResponse?.returnedModel==returned)
+        check("HTTP metadata keeps request identity across retry",responseEvents.count==2 && responseEvents.allSatisfy { $0.identity?.requestID==link.identity.requestID })
+        let journal=String(decoding:try JSONEncoder().encode(trace.snapshot()),as:UTF8.self)
+        check("HTTP metadata journal excludes request/key/body",!journal.contains("Fictional transport check") && !journal.contains("synthetic-placeholder") && !journal.contains("fictional retry"))
+        check("HTTP metadata finish never grants native acceptance",trace.finish()?.nativeAcceptance==false)
         print("REVIEWED_PROVIDER_TRANSPORT_CHECKS \(count) FAILURES \(failed); mock HTTP + actual provider/privacy sources, not semantic or native acceptance")
     }
 }

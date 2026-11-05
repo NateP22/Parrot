@@ -1081,7 +1081,8 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         for attempt in 0..<2 {
             answerTrace?.mark(.requestSent, model: Self.model)
             let (data, response) = try await session.data(for: request)
-            answerTrace?.mark(.responseReceived, model: Self.model)
+            answerTrace?.receivedHTTPResponse(statusCode: (response as? HTTPURLResponse)?.statusCode,
+                                             data: data, requestedModel: Self.model)
 
             guard let http = response as? HTTPURLResponse else {
                 throw AnalysisError.badResponse("No HTTP response")

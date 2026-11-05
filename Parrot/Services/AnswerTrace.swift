@@ -54,6 +54,44 @@ struct AnswerTraceRequestIdentity: Codable, Sendable {
     var repositoryRevision: String? = nil
 }
 
+/// Response metadata only. Unrecognized provider text is never copied to disk.
+struct AnswerTraceHTTPResponse: Codable, Equatable, Sendable {
+    enum ModelState: String, Codable, Sendable { case recognized, missing, unrecognized, invalid, tooLarge }
+    let statusCode: Int?
+    let returnedModel: String?
+    let modelState: ModelState
+    static let maximumResponseBytes = 1024 * 1024
+
+    private struct Envelope: Decodable { let model: String? }
+
+    private static func allowedModel(_ value: String) -> Bool {
+        value.range(of: "\\Aclaude-haiku-5-5(?:-[0-9]{8})?\\z", options: .regularExpression) != nil
+    }
+
+    static func inspect(statusCode: Int?, data: Data) -> Self {
+        let status = statusCode.flatMap { (100...599).contains($0) ? $0 : nil }
+        guard data.count <= maximumResponseBytes else {
+            return Self(statusCode: status, returnedModel: nil, modelState: .tooLarge)
+        }
+        guard let envelope = try? JSONDecoder().decode(Envelope.self, from: data) else {
+            return Self(statusCode: status, returnedModel: nil, modelState: .invalid)
+        }
+        guard let model = envelope.model else {
+            return Self(statusCode: status, returnedModel: nil, modelState: .missing)
+        }
+        guard allowedModel(model) else {
+            return Self(statusCode: status, returnedModel: nil, modelState: .unrecognized)
+        }
+        return Self(statusCode: status, returnedModel: model, modelState: .recognized)
+    }
+
+    var isSafe: Bool {
+        if let statusCode, !(100...599).contains(statusCode) { return false }
+        if modelState == .recognized { return returnedModel.map(Self.allowedModel) == true }
+        return returnedModel == nil
+    }
+}
+
 /// Retained by a request across awaits and redaction; never sent to a model.
 struct AnswerTraceLink: Sendable {
     let context: AnswerTraceContext
@@ -62,6 +100,13 @@ struct AnswerTraceLink: Sendable {
 
     func mark(_ stage: AnswerTraceStage, model: String? = nil, insightID: UUID? = nil) {
         _ = recorder.mark(context: context, stage: stage, identity: identity, model: model, insightID: insightID)
+    }
+
+    func receivedHTTPResponse(statusCode: Int?, data: Data, requestedModel: String) {
+        let receivedAtNs = AnswerTraceClock.nowNs()
+        let metadata = AnswerTraceHTTPResponse.inspect(statusCode: statusCode, data: data)
+        _ = recorder.mark(context: context, stage: .responseReceived, atNs: receivedAtNs,
+                          identity: identity, model: requestedModel, httpResponse: metadata)
     }
 
     func bind(insightID: UUID) {
@@ -95,6 +140,8 @@ final class AnswerTraceRecorder: @unchecked Sendable {
         let identity: AnswerTraceRequestIdentity?
         let model: String?
         let insightID: UUID?
+        /// Optional so existing v1 journals continue to decode unchanged.
+        let httpResponse: AnswerTraceHTTPResponse?
     }
     struct Binding: Codable, Sendable {
         let insightID: UUID
@@ -193,16 +240,20 @@ final class AnswerTraceRecorder: @unchecked Sendable {
 
     @discardableResult
     func mark(context: AnswerTraceContext, stage: AnswerTraceStage, atNs: UInt64? = nil,
-              identity: AnswerTraceRequestIdentity? = nil, model: String? = nil, insightID: UUID? = nil) -> Bool {
+              identity: AnswerTraceRequestIdentity? = nil, model: String? = nil, insightID: UUID? = nil,
+              httpResponse: AnswerTraceHTTPResponse? = nil) -> Bool {
         lock.withLock {
             guard enabled else { return false }
             guard active, session == context.sessionID else { rejectedContexts += 1; return false }
             guard let timestamp = atNs ?? AnswerTraceClock.nowNs() else { clockErrors += 1; return false }
             // Only fixed model identifiers, never arbitrary request/settings strings.
             guard model == nil || model == "claude-haiku-5-5" else { rejectedContexts += 1; return false }
+            guard httpResponse == nil || (stage == .responseReceived && httpResponse!.isSafe) else {
+                rejectedContexts += 1; return false
+            }
             guard events.count < eventLimit else { droppedEvents += 1; truncated = true; return false }
             events.append(Event(context: context, stage: stage, atNs: timestamp,
-                                identity: identity, model: model, insightID: insightID))
+                                identity: identity, model: model, insightID: insightID, httpResponse: httpResponse))
             return true
         }
     }

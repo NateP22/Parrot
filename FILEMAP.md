@@ -72,7 +72,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/AnalysisProvider.swift` | 1620 | Claude Haiku 5.5; reviewed whole replies and strict document answers; shared bounded review context, source/version/state guards and original evidence |
 | `Services/QACredentialProbePolicy.swift` | 25 | Exact QA setup-only credential command, canonical UUID, fixed non-provider account/public fixture namespace |
 | `QACredentialProbe.swift` | 145 | QA-only non-secret write/verify-cleanup/absence phases through actual APIKeyStore; dual UI refusal, bounded reports/timeouts; no provider/audio/store |
-| `Services/AnswerTrace.swift` | 260 | Explicit stable-QA-only bounded diagnostic journal, integer Mach clock, immutable question/request/insight bindings; no raw text or visible-frame/native acceptance claim |
+| `Services/AnswerTrace.swift` | 310 | Explicit stable-QA-only bounded diagnostic journal, Mach clock and immutable bindings; redacted actual HTTP status/returned-model metadata separate from requested model; no raw text or native acceptance claim |
 | `Services/AnswerAudioTrace.swift` | 180 | Stable-QA raw capture clocks and emitted sample/padding provenance; bounded session journal, calibration and actual file mapping remain unverified |
 | `Services/AnswerFrameTrace.swift` | 170 | QA own-window frame ownership/clock/geometry/retention and bounded movie/sidecar write budget; admission/journal never grant native visibility acceptance |
 | `Services/NativeAnswerFrameRecorder.swift` | 380 | Passive exact-own-window SCK screen-only movie, full callback metadata and sample/PTS readback; bounded writer-space admission and capped sidecars, independent visible-text/occlusion review required |

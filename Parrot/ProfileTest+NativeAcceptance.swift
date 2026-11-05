@@ -86,6 +86,58 @@ enum NativeAcceptanceTraceTests {
         check("Mach zero denominator rejected", AnswerTraceClock.nanoseconds(ticks: 1, numerator: 1, denominator: 0) == nil)
         check("Mach overflow rejected", AnswerTraceClock.nanoseconds(ticks: .max, numerator: 2, denominator: 1) == nil)
         check("Mach UInt64 exact bound retained", AnswerTraceClock.nanoseconds(ticks: .max, numerator: 1, denominator: 1) == .max)
+        runHTTPMetadata(check)
+    }
+
+    private static func runHTTPMetadata(_ check: (String, Bool) -> Void) {
+        let base = "claude-haiku-5-5", dated = "claude-haiku-5-5-20261101"
+        let bodyMarker = "FICTIONAL_RESPONSE_BODY_NOT_FOR_THE_JOURNAL"
+        func packet(_ model: Any?) -> Data {
+            var value: [String: Any] = ["content": [["type": "text", "text": bodyMarker]]]
+            if let model { value["model"] = model }
+            return try! JSONSerialization.data(withJSONObject: value)
+        }
+        let recognized = AnswerTraceHTTPResponse.inspect(statusCode: 200, data: packet(dated))
+        check("HTTP trace retains actual returned dated model and status",
+              recognized.statusCode == 200 && recognized.returnedModel == dated && recognized.modelState == .recognized)
+        check("HTTP trace accepts exact requested-model response",
+              AnswerTraceHTTPResponse.inspect(statusCode: 200, data: packet(base)).returnedModel == base)
+        for model in ["private-token-fixture", "claude-sonnet-4-5", base + "\n", base + "-20261101-private"] {
+            let response = AnswerTraceHTTPResponse.inspect(statusCode: 200, data: packet(model))
+            check("HTTP trace redacts unrecognized model \(model == base + "\n" ? "newline" : "shape")",
+                  response.returnedModel == nil && response.modelState == .unrecognized)
+        }
+        check("HTTP trace missing model is explicit", AnswerTraceHTTPResponse.inspect(statusCode: 200, data: packet(nil)).modelState == .missing)
+        check("HTTP trace wrong model type is explicit", AnswerTraceHTTPResponse.inspect(statusCode: 200, data: packet(42)).modelState == .invalid)
+        check("HTTP trace malformed JSON is explicit", AnswerTraceHTTPResponse.inspect(statusCode: 503, data: Data("{bad".utf8)).modelState == .invalid)
+        check("HTTP trace caps response parsing", AnswerTraceHTTPResponse.inspect(statusCode: 200,
+            data: Data(repeating: 32, count: AnswerTraceHTTPResponse.maximumResponseBytes + 1)).modelState == .tooLarge)
+        check("HTTP trace never invents non-HTTP status", AnswerTraceHTTPResponse.inspect(statusCode: nil, data: packet(base)).statusCode == nil)
+        check("HTTP trace drops invalid status", AnswerTraceHTTPResponse.inspect(statusCode: 0, data: packet(base)).statusCode == nil)
+
+        let recorder = AnswerTraceRecorder(enabled: true)
+        let session = recorder.startSession()!
+        let context = recorder.makeContext(source: .them, expectedSessionID: session)!
+        let link = recorder.link(context: context, profileID: nil, catalogRevisionToken: nil)!
+        link.receivedHTTPResponse(statusCode: 429, data: packet(nil), requestedModel: base)
+        link.receivedHTTPResponse(statusCode: 200, data: packet(dated), requestedModel: base)
+        let events = recorder.snapshot().events
+        check("HTTP trace keeps both response attempts on original request",
+              events.count == 2 && events.map { $0.httpResponse?.statusCode } == [429, 200]
+              && events.allSatisfy { $0.identity?.requestID == link.identity.requestID && $0.model == base })
+        check("HTTP trace does not relabel requested model as returned", events.last?.model != events.last?.httpResponse?.returnedModel)
+        let encoded = try! JSONEncoder().encode(recorder.snapshot())
+        let text = String(decoding: encoded, as: UTF8.self)
+        check("HTTP trace excludes raw response content", !text.contains(bodyMarker) && !text.contains("private-token-fixture"))
+        var legacy = try! JSONSerialization.jsonObject(with: JSONEncoder().encode(events[0])) as! [String: Any]
+        legacy.removeValue(forKey: "httpResponse")
+        let decoded = try? JSONDecoder().decode(AnswerTraceRecorder.Event.self,
+            from: JSONSerialization.data(withJSONObject: legacy))
+        check("HTTP trace decodes legacy v1 events without new field", decoded?.httpResponse == nil && decoded?.model == base)
+        let unsafe = AnswerTraceHTTPResponse(statusCode: 200, returnedModel: bodyMarker, modelState: .recognized)
+        check("HTTP trace rejects forged unsafe metadata", !recorder.mark(context: context, stage: .responseReceived, httpResponse: unsafe))
+        check("HTTP trace metadata belongs only to response event", !recorder.mark(context: context, stage: .validated, httpResponse: recognized))
+        check("HTTP trace remains diagnostic", recorder.finish()?.nativeAcceptance == false)
     }
 }
 
