@@ -70,6 +70,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/CloudTranscription.swift` | 452 | Opt-in Groq (batch) and Deepgram (streaming; finals carry the words' spoken span) backends + WAV encode; `TranscriptPolisher`: the post-call Groq re-decode, which skips Me lines the echo gate calls echo |
 | `Services/DiarizationEngine.swift` | 156 | FluidAudio pyannote diarization (CoreML): labels + per-speaker embeddings; whole file or a live 60 s tail |
 | `Services/AnalysisProvider.swift` | 1620 | Claude Haiku 5.5; reviewed whole replies and strict document answers; shared bounded review context, source/version/state guards and original evidence |
+| `Services/PreparedProviderHTTP.swift` | candidate | Prepared-comparison HTTP observations: actual wire/model/status, full-body time, nullable cache usage, private response bounds and no-redirect session; not native acceptance |
 | `Services/QACredentialProbePolicy.swift` | 25 | Exact QA setup-only credential command, canonical UUID, fixed non-provider account/public fixture namespace |
 | `QACredentialProbe.swift` | 145 | QA-only non-secret write/verify-cleanup/absence phases through actual APIKeyStore; dual UI refusal, bounded reports/timeouts; no provider/audio/store |
 | `Services/AnswerTrace.swift` | 310 | Explicit stable-QA-only bounded diagnostic journal, Mach clock and immutable bindings; redacted actual HTTP status/returned-model metadata separate from requested model; no raw text or native acceptance claim |
@@ -222,6 +223,7 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `scripts/test-native-credential-runner.py` | Runner ordering/identity/recovery/privacy/cleanup checks and fictional child timeout/reaping; no real credentials |
 | `scripts/test-native-credential-probe.py` | Actual phase/report code with link-fenced mock Security calls, plus Swift JSON to real Python validator contract |
 | `scripts/test-selector-credential-policy.py` | Actual selector key-read block and background forwarding with link-fenced Security shims; refuses UI suppression failures, locked/missing own keys, preserves ordinary defaults; no real credentials |
+| `scripts/test-prepared-provider-http.py` | Actual production HTTP method with fictional URLProtocol: first errors/no retries, complete-body clock, model/cache unknowns, privacy, duplicate wire bodies and normal retry control; no real credentials/model/native proof |
 | `scripts/test-automatic-credential-policy.py` | Actual key-store source against inert Security calls: no-UI policy, coalesced settings readers, independent deadlines/expired-owner recovery, explicit-authorization ownership and stale/cache guards; no real credentials/native acceptance |
 | `scripts/test-reviewed-form-context.py` | Bounded actual-source run of existing fictional condition/state/quote routing regressions; no app, credentials, models, provider score or native acceptance |
 | `scripts/test-document-review-context.py` | Actual strict request/review functions with inert transport; follow-up context parity, data bounds, cancellation and failure controls; no model/native acceptance |

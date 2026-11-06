@@ -1063,7 +1063,8 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
     private func performRequest(body: [String: Any], apiKey: String,
                                 timeout: TimeInterval = 60, retryTransient: Bool = true,
                                 answerTrace: AnswerTraceLink? = nil,
-                                repositoryContext: Bool = false) async throws -> Data {
+                                repositoryContext: Bool = false,
+                                observingHTTP: ((Int?, Data?, UInt64, UInt64, Data) -> Void)? = nil) async throws -> Data {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.timeoutInterval = timeout
@@ -1080,7 +1081,19 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
         // jitter / Retry-After parsing if rate limits persist.
         for attempt in 0..<2 {
             answerTrace?.mark(.requestSent, model: Self.model)
-            let (data, response) = try await session.data(for: request)
+            let began = observingHTTP == nil ? nil : DispatchTime.now().uptimeNanoseconds
+            let data: Data, response: URLResponse
+            do { (data, response) = try await session.data(for: request) }
+            catch {
+                if let began {
+                    observingHTTP?(nil, nil, began, DispatchTime.now().uptimeNanoseconds, request.httpBody ?? Data())
+                }
+                throw error
+            }
+            if let began {
+                observingHTTP?((response as? HTTPURLResponse)?.statusCode, data, began,
+                               DispatchTime.now().uptimeNanoseconds, request.httpBody ?? Data())
+            }
             answerTrace?.receivedHTTPResponse(statusCode: (response as? HTTPURLResponse)?.statusCode,
                                              data: data, requestedModel: Self.model)
 
