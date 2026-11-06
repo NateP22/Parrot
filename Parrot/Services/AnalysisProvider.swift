@@ -1721,7 +1721,7 @@ enum APIKeyStore {
     // The legacy UI policy is process-wide. Serialize every credential operation,
     // including explicit writes, so one read cannot restore UI around another.
     private static let keychainLock = NSRecursiveLock()
-    private static let pendingSettings = OSAllocatedUnfairLock(initialState: Set<String>())
+    private static let pendingSettings = OSAllocatedUnfairLock(initialState: [String: SettingsRead]())
     private static let mainQueueKey: DispatchSpecificKey<UInt8> = {
         let key = DispatchSpecificKey<UInt8>()
         DispatchQueue.main.setSpecific(key: key, value: 1)
@@ -1863,7 +1863,7 @@ enum APIKeyStore {
                 return true
             }
         }
-        func expire() {
+        func expire() -> Bool {
             let value = state.withLock { stored -> CheckedContinuation<SettingsKeyResult, Never>? in
                 // An explicitly started private authorization belongs to the
                 // owner; never report timeout while its Mac box remains open.
@@ -1873,6 +1873,7 @@ enum APIKeyStore {
                 return result
             }
             value?.resume(returning: .unavailable)
+            return value != nil
         }
         func finish(_ result: SettingsKeyResult) {
             let value = state.withLock { stored in
@@ -1882,6 +1883,39 @@ enum APIKeyStore {
             }
             value?.resume(returning: result)
         }
+    }
+
+    // All waiter membership is protected by pendingSettings. Each caller owns
+    // its deadline; the underlying uncancellable Security operation is shared.
+    private final class SettingsRead: @unchecked Sendable {
+        var waiters: [SettingsCompletion]
+        init(_ owner: SettingsCompletion) { waiters = [owner] }
+    }
+
+    private static func hasPendingWaiter(account: String, read: SettingsRead) -> Bool {
+        pendingSettings.withLock { reads in
+            guard reads[account] === read else { return false }
+            if read.waiters.contains(where: { $0.isPending }) { return true }
+            // Retire an abandoned, not-yet-started read atomically. A later
+            // subscriber must form a fresh flight, not join this abort while
+            // its worker releases the unrelated Security lock.
+            reads.removeValue(forKey: account)
+            read.waiters.removeAll()
+            return false
+        }
+    }
+
+    private static func finishSettingsRead(account: String, read: SettingsRead,
+                                           result: SettingsKeyResult) {
+        let waiters = pendingSettings.withLock { reads -> [SettingsCompletion] in
+            guard reads[account] === read else { return [] }
+            reads.removeValue(forKey: account)
+            let values = read.waiters
+            read.waiters.removeAll()
+            return values
+        }
+        // A resumed UI task must never run while a coordinator lock is held.
+        for waiter in waiters { waiter.finish(result) }
     }
 
     private static func cachedSettingsResult(account: String) -> SettingsKeyResult? {
@@ -1906,38 +1940,62 @@ enum APIKeyStore {
                             timeoutSeconds: TimeInterval = 3) async -> SettingsKeyResult {
         if !requestAuthorization, let cached = cachedSettingsResult(account: account) { return cached }
         guard timeoutSeconds > 0, timeoutSeconds <= 10 else { return .unavailable }
-        // One uncancellable Security operation per account. A timed-out waiter
-        // cannot create more workers or re-enable UI around the original read.
-        guard pendingSettings.withLock({ $0.insert(account).inserted }) else { return .unavailable }
         return await withCheckedContinuation { continuation in
             let completion = SettingsCompletion(continuation)
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeoutSeconds) { completion.expire() }
+            let registration = pendingSettings.withLock { reads -> (SettingsRead, Bool)? in
+                if let existing = reads[account] {
+                    // Only the initiating owner can authorize a private prompt.
+                    // Never queue one behind any existing account operation.
+                    guard !requestAuthorization else { return nil }
+                    existing.waiters.append(completion)
+                    return (existing, false)
+                }
+                let read = SettingsRead(completion)
+                reads[account] = read
+                return (read, true)
+            }
+            guard let (read, startsWorker) = registration else {
+                completion.finish(.unavailable)
+                return
+            }
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + timeoutSeconds) {
+                if completion.expire() {
+                    pendingSettings.withLock { reads in
+                        guard reads[account] === read else { return }
+                        // A stalled operation retains only live waiters; repeated
+                        // timed-out UI calls must not grow its retained array.
+                        read.waiters.removeAll { $0 === completion }
+                    }
+                }
+            }
+            // One uncancellable Security operation per account, even after its
+            // original caller expires. Ordinary subscribers share its result.
+            guard startsWorker else { return }
             DispatchQueue.global(qos: .utility).async {
                 if requestAuthorization {
                     // Never queue authorization behind an unrelated stalled
                     // lookup and display its Mac prompt after the user left.
                     guard keychainLock.try() else {
-                        pendingSettings.withLock { _ = $0.remove(account) }
-                        completion.finish(.unavailable)
+                        finishSettingsRead(account: account, read: read, result: .unavailable)
                         return
                     }
                 } else { keychainLock.lock() }
-                defer { keychainLock.unlock() }
-                guard requestAuthorization ? completion.beginInteractive() : completion.isPending else {
-                    pendingSettings.withLock { _ = $0.remove(account) }
-                    return
-                }
-                if requestAuthorization {
-                cache.withLock { values in
-                    if let cached = values[account], cached == nil {
-                        values.removeValue(forKey: account)
+                let result: SettingsKeyResult = {
+                    defer { keychainLock.unlock() }
+                    guard requestAuthorization ? completion.beginInteractive() : hasPendingWaiter(account: account, read: read) else {
+                        return .unavailable
                     }
-                }
-                }
-                _ = load(account: account, allowInteraction: requestAuthorization)
-                let result = cachedSettingsResult(account: account) ?? (isSessionOnly ? .notFound : .unavailable)
-                pendingSettings.withLock { _ = $0.remove(account) }
-                completion.finish(result)
+                    if requestAuthorization {
+                        cache.withLock { values in
+                            if let cached = values[account], cached == nil {
+                                values.removeValue(forKey: account)
+                            }
+                        }
+                    }
+                    _ = load(account: account, allowInteraction: requestAuthorization)
+                    return cachedSettingsResult(account: account) ?? (isSessionOnly ? .notFound : .unavailable)
+                }()
+                finishSettingsRead(account: account, read: read, result: result)
             }
         }
     }

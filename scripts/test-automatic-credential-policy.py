@@ -6,6 +6,20 @@ import platform, plistlib, shutil, subprocess, tempfile
 root = Path(__file__).resolve().parents[1]
 source = (root / 'Parrot/Services/AnalysisProvider.swift').read_text()
 helper = 'import Foundation\nimport Security\nimport LocalAuthentication\nimport os\n' + source[source.index('enum APIKeyStore {'):]
+# Read-only synchronization for the fixture only, appended to the extracted
+# helper file. No production API, behavior or Security boundary is changed.
+helper += r'''
+extension APIKeyStore {
+    static func regressionHasSettingsRead(_ account: String) -> Bool {
+        pendingSettings.withLock { $0[account] != nil }
+    }
+    static func regressionLiveSettingsWaiters(_ account: String) -> Int {
+        pendingSettings.withLock { reads in
+            reads[account]?.waiters.filter { $0.isPending }.count ?? 0
+        }
+    }
+}
+'''
 shims = (root / 'scripts/credential-regression.swift').read_text().split('var failures = 0')[0]
 main = shims + r'''
 var legacyAllowed = true
@@ -26,6 +40,13 @@ func SecKeychainGetUserInteractionAllowed(_ value: UnsafeMutablePointer<DarwinBo
     return legacyGetFailure ? errSecAuthFailed : errSecSuccess
 }
 func waitForFixtureEntry(_ gate: DispatchSemaphore) -> Bool { gate.wait(timeout: .now() + 2) == .success }
+func waitForState(_ predicate: () -> Bool) async -> Bool {
+    for _ in 0..<200 {
+        if predicate() { return true }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    return false
+}
 var failures = 0
 func check(_ name: String, _ ok: Bool) {
     print((ok ? "PASS " : "FAIL ") + name)
@@ -79,6 +100,126 @@ Task {
         return count
     }
     check("concurrent cache misses make one Security read", successes == 20 && reads["parallel-load"] == 1)
+
+    // A settings panel may arrive while startup is already loading the same
+    // key. Both ordinary callers should share the result, never a new query.
+    records["joined-read"] = Data("public-joined-fixture".utf8)
+    let joinedEntered = DispatchSemaphore(value: 0)
+    let joinedRelease = DispatchSemaphore(value: 0)
+    afterRead["joined-read"] = { joinedEntered.signal(); _ = joinedRelease.wait(timeout: .now() + 5) }
+    let joinedOwner = Task { await APIKeyStore.settingsKey(account: "joined-read", timeoutSeconds: 2) }
+    check("joined read enters one fictional operation", await Task.detached { waitForFixtureEntry(joinedEntered) }.value)
+    let sameAccountAuthorization = await APIKeyStore.settingsKey(account: "joined-read", requestAuthorization: true)
+    check("explicit authorization never queues behind same-account read", sameAccountAuthorization == .unavailable)
+    let joinedFollower = Task { await APIKeyStore.settingsKey(account: "joined-read", timeoutSeconds: 2) }
+    check("both ordinary waiters are registered before release",
+          await waitForState { APIKeyStore.regressionLiveSettingsWaiters("joined-read") == 2 })
+    joinedRelease.signal()
+    let joinedResult = await joinedFollower.value
+    let joinedFirst = await joinedOwner.value
+    check("overlapping ordinary readers both receive the existing key",
+          joinedFirst == .available("public-joined-fixture") && joinedResult == joinedFirst)
+    check("joined ordinary callers make exactly one Security query", reads["joined-read"] == 1)
+
+    // Expiration belongs to a waiter, not to the still-running read. A later
+    // ordinary waiter must survive an earlier owner's deadline.
+    records["queue-blocker"] = Data("public-blocker-fixture".utf8)
+    records["queued-survivor"] = Data("public-survivor-fixture".utf8)
+    let blockerEntered = DispatchSemaphore(value: 0)
+    let blockerRelease = DispatchSemaphore(value: 0)
+    afterRead["queue-blocker"] = { blockerEntered.signal(); _ = blockerRelease.wait(timeout: .now() + 5) }
+    let blockerOwner = Task { await APIKeyStore.settingsKey(account: "queue-blocker", timeoutSeconds: 2) }
+    check("unrelated operation holds the fictional read lock", await Task.detached { waitForFixtureEntry(blockerEntered) }.value)
+    let expiredOwner = await APIKeyStore.settingsKey(account: "queued-survivor", timeoutSeconds: 0.05)
+    check("queued owner expires independently", expiredOwner == .unavailable && reads["queued-survivor"] == nil)
+    let survivingFollower = Task { await APIKeyStore.settingsKey(account: "queued-survivor", timeoutSeconds: 2) }
+    check("surviving ordinary waiter is registered before release",
+          await waitForState { APIKeyStore.regressionLiveSettingsWaiters("queued-survivor") == 1 })
+    blockerRelease.signal()
+    let survivor = await survivingFollower.value
+    _ = await blockerOwner.value
+    check("live joined waiter survives expired ordinary owner",
+          survivor == .available("public-survivor-fixture") && reads["queued-survivor"] == 1)
+
+    // Settle this deliberately expired fixture before the next, unrelated
+    // explicit-authorization control; a busy try-lock is an allowed refusal.
+    var settledSurvivor: APIKeyStore.SettingsKeyResult = .unavailable
+    for _ in 0..<50 {
+        settledSurvivor = await APIKeyStore.settingsKey(account: "queued-survivor")
+        if case .available = settledSurvivor { break }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    check("queued fixture settles before the next control", settledSurvivor == .available("public-survivor-fixture"))
+    check("fictional read lock is released before explicit control",
+          APIKeyStore.metadataStatus(account: "settled-barrier") == errSecItemNotFound)
+
+    records["abandon-blocker"] = Data("public-abandon-blocker".utf8)
+    records["abandoned-read"] = Data("public-abandoned-fixture".utf8)
+    let abandonEntered = DispatchSemaphore(value: 0)
+    let abandonRelease = DispatchSemaphore(value: 0)
+    afterRead["abandon-blocker"] = { abandonEntered.signal(); _ = abandonRelease.wait(timeout: .now() + 5) }
+    let abandonBlocker = Task { await APIKeyStore.settingsKey(account: "abandon-blocker", timeoutSeconds: 2) }
+    check("abandon control holds unrelated fictional read",
+          await Task.detached { waitForFixtureEntry(abandonEntered) }.value)
+    let abandonedOwner = await APIKeyStore.settingsKey(account: "abandoned-read", timeoutSeconds: 0.05)
+    let abandonedFollower = await APIKeyStore.settingsKey(account: "abandoned-read", timeoutSeconds: 0.05)
+    check("all queued ordinary waiters expire without an item query",
+          abandonedOwner == .unavailable && abandonedFollower == .unavailable
+          && APIKeyStore.regressionLiveSettingsWaiters("abandoned-read") == 0
+          && APIKeyStore.regressionHasSettingsRead("abandoned-read") && reads["abandoned-read"] == nil)
+    abandonRelease.signal()
+    _ = await abandonBlocker.value
+    check("unstarted abandoned cohort is retired",
+          await waitForState { !APIKeyStore.regressionHasSettingsRead("abandoned-read") })
+    check("retiring abandoned cohort makes no Security query", reads["abandoned-read"] == nil)
+    let freshAfterAbandon = await APIKeyStore.settingsKey(account: "abandoned-read")
+    check("fresh caller succeeds after abandoned cohort",
+          freshAfterAbandon == .available("public-abandoned-fixture") && reads["abandoned-read"] == 1)
+
+    records["denial-blocker"] = Data("public-denial-blocker".utf8)
+    blockedReads["joined-denial"] = errSecInteractionNotAllowed
+    let denialEntered = DispatchSemaphore(value: 0)
+    let denialRelease = DispatchSemaphore(value: 0)
+    afterRead["denial-blocker"] = { denialEntered.signal(); _ = denialRelease.wait(timeout: .now() + 5) }
+    let denialBlocker = Task { await APIKeyStore.settingsKey(account: "denial-blocker", timeoutSeconds: 2) }
+    check("denial control holds unrelated fictional read",
+          await Task.detached { waitForFixtureEntry(denialEntered) }.value)
+    let denialOwner = Task { await APIKeyStore.settingsKey(account: "joined-denial", timeoutSeconds: 2) }
+    check("denial owner is registered", await waitForState { APIKeyStore.regressionLiveSettingsWaiters("joined-denial") == 1 })
+    let denialFollower = Task { await APIKeyStore.settingsKey(account: "joined-denial", timeoutSeconds: 2) }
+    check("denial follower is registered", await waitForState { APIKeyStore.regressionLiveSettingsWaiters("joined-denial") == 2 })
+    denialRelease.signal()
+    let firstDenial = await denialOwner.value
+    let secondDenial = await denialFollower.value
+    _ = await denialBlocker.value
+    check("joined denied reads preserve authorization classification",
+          firstDenial == .needsAuthorization && secondDenial == .needsAuthorization && reads["joined-denial"] == 1)
+    check("joined denial refresh never repeats the read",
+          await APIKeyStore.settingsKey(account: "joined-denial") == .needsAuthorization && reads["joined-denial"] == 1)
+
+    records["interactive-owner"] = Data("public-interactive-fixture".utf8)
+    let interactiveEntered = DispatchSemaphore(value: 0)
+    let interactiveRelease = DispatchSemaphore(value: 0)
+    afterRead["interactive-owner"] = { interactiveEntered.signal(); _ = interactiveRelease.wait(timeout: .now() + 5) }
+    let interactiveOwner = Task {
+        await APIKeyStore.settingsKey(account: "interactive-owner", requestAuthorization: true, timeoutSeconds: 0.05)
+    }
+    check("explicit fictional read actually starts", await Task.detached { waitForFixtureEntry(interactiveEntered) }.value)
+    let ordinaryDeadline = Date()
+    let ordinaryJoined = await APIKeyStore.settingsKey(account: "interactive-owner", timeoutSeconds: 0.05)
+    check("ordinary waiter keeps its deadline during explicit authorization",
+          ordinaryJoined == .unavailable && Date().timeIntervalSince(ordinaryDeadline) < 0.5)
+    interactiveRelease.signal()
+    check("explicit owner retains its own authorization lifetime",
+          await interactiveOwner.value == .available("public-interactive-fixture"))
+    check("ordinary joiner cannot create an interactive query", reads["interactive-owner"] == 1)
+
+    records["cold-main-ready"] = Data("public-cold-main-fixture".utf8)
+    let coldResult = await MainActor.run { APIKeyStore.load(account: "cold-main-ready") }
+    check("cold main read defers without blocking", coldResult == nil)
+    let warmedMain = await APIKeyStore.loadInBackground(account: "cold-main-ready")
+    check("deferred cold main read becomes available to awaited caller",
+          warmedMain == "public-cold-main-fixture" && reads["cold-main-ready"] == 1)
     let release = DispatchSemaphore(value: 0)
     let entered = DispatchSemaphore(value: 0)
     _ = APIKeyStore.save("public-cached-fixture", account: "cached-main")
