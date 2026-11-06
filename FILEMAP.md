@@ -71,6 +71,8 @@ tree. Line counts are rough — they flag which files are worth reading whole.
 | `Services/DiarizationEngine.swift` | 156 | FluidAudio pyannote diarization (CoreML): labels + per-speaker embeddings; whole file or a live 60 s tail |
 | `Services/AnalysisProvider.swift` | 1620 | Claude Haiku 5.5; reviewed whole replies and strict document answers; shared bounded review context, source/version/state guards and original evidence |
 | `Services/PreparedProviderHTTP.swift` | candidate | Prepared-comparison HTTP observations: actual wire/model/status, full-body time, nullable cache usage, private response bounds and no-redirect session; not native acceptance |
+| `PreparedProviderInput.swift` | candidate | Frozen15 packet admission, private exact inventory, external packet pin and all actual wire hashes before key/network; declared upstream provenance separate |
+| `PreparedProviderComparison.swift` | candidate | Exact QA CLI, own noninteractive key, cloud/route rechecks, ordered normal Claude sends and durable first-result journal; unscored component only |
 | `Services/QACredentialProbePolicy.swift` | 25 | Exact QA setup-only credential command, canonical UUID, fixed non-provider account/public fixture namespace |
 | `QACredentialProbe.swift` | 145 | QA-only non-secret write/verify-cleanup/absence phases through actual APIKeyStore; dual UI refusal, bounded reports/timeouts; no provider/audio/store |
 | `Services/AnswerTrace.swift` | 310 | Explicit stable-QA-only bounded diagnostic journal, Mach clock and immutable bindings; redacted actual HTTP status/returned-model metadata separate from requested model; no raw text or native acceptance claim |

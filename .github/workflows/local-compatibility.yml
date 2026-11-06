@@ -79,6 +79,7 @@ jobs:
           python3 -B scripts/test-profile-runner.py | tee source-grounded-evidence/profile-runner.log
           python3 -B scripts/test-automatic-credential-policy.py | tee source-grounded-evidence/automatic-credential-policy.log
           python3 -B scripts/test-prepared-provider-http.py 2>&1 | tee source-grounded-evidence/prepared-provider-http.log
+          python3 -B scripts/test-prepared-provider-comparison.py --work-root source-grounded-evidence 2>&1 | tee source-grounded-evidence/prepared-provider-comparison.log
           python3 -B scripts/test-export-repository-knowledge.py 2>&1 | tee source-grounded-evidence/repository-export.log
           swiftc -parse-as-library -target "$(uname -m)-apple-macosx14.0" -sdk "$(xcrun --sdk macosx --show-sdk-path)" Parrot/Services/RepositoryKnowledge.swift scripts/repository-knowledge-test.swift -o source-grounded-evidence/repository-component-tests
           source-grounded-evidence/repository-component-tests | tee source-grounded-evidence/repository-components.log

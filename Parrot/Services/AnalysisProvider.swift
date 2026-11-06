@@ -1060,6 +1060,17 @@ final class ClaudeAnalysisProvider: AnalysisProvider {
 
     // MARK: - HTTP
 
+    /// Exact frozen developer requests, through this provider's normal transport.
+    /// The caller admits all packet bytes first; no retry or prompt rebuilding.
+    func sendPreparedComparison(body: [String: Any],
+                                observingHTTP: @escaping PreparedProviderHTTP.Observer) async throws -> Data {
+        try Task.checkCancellation()
+        try PreparedProviderComparison.checkCloudRoute()
+        guard let key = keyProvider(), !key.isEmpty else { throw AnalysisError.missingAPIKey }
+        return try await performRequest(body: body, apiKey: key, timeout: 30,
+            retryTransient: false, repositoryContext: true, observingHTTP: observingHTTP)
+    }
+
     private func performRequest(body: [String: Any], apiKey: String,
                                 timeout: TimeInterval = 60, retryTransient: Bool = true,
                                 answerTrace: AnswerTraceLink? = nil,

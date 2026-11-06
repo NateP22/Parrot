@@ -18,6 +18,10 @@ struct ParrotMain {
             MainActor.assumeIsolated { QASetupSelfCheck.run() }
             return
         }
+        if args.count==4,args[1]=="--qa-setup",args[2]=="--prepared-provider-comparison" {
+            PreparedProviderComparison.run(manifestPath:args[3])
+            return
+        }
         if args.count==4,args[1]=="--qa-setup",args[2]=="--reviewed-selector-eval" {
             ReviewedSelectorEval.run(manifestPath:args[3])
             return
